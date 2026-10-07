@@ -1,0 +1,29 @@
+{
+  "name": "@helmsman/extension",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "pack": "node ./scripts/pack.mjs --build",
+    "typecheck": "tsc --noEmit",
+    "test:keyring": "tsx src/wallet/keyring.vectors.ts",
+    "store": "node ./scripts/pack.mjs --build"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "@solana/web3.js": "^1.99.0",
+    "bip39": "^3.1.0",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.11",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  },
+  "description": "Clawd / SolGPT Chrome extension \u2014 Solana wallet + agent surface. Superintelligent Design \u00b7 x402.life \u00b7 solgpt.trade"
+}

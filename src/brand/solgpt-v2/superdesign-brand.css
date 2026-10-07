@@ -1,0 +1,46 @@
+/* Clawd Superdesign / SolGPT v2 — drop into webview App.css overrides */
+:root {
+  --clawd-bg: #0a0a0a;
+  --clawd-bg-elevated: #111111;
+  --clawd-fg: #e7edf5;
+  --clawd-muted: #888888;
+  --clawd-green: #14F195;
+  --clawd-purple: #9945FF;
+  --clawd-glow-purple: rgba(153, 69, 255, 0.45);
+  --clawd-glow-green: rgba(20, 241, 149, 0.35);
+}
+
+.superdesign-app.chat-view,
+.superdesign-app.canvas-view {
+  background: var(--clawd-bg);
+  color: var(--clawd-fg);
+}
+
+.app-header,
+.chat-header {
+  border-bottom: 1px solid rgba(153, 69, 255, 0.25);
+  background: var(--clawd-bg-elevated);
+}
+
+.chat-input button,
+button.primary {
+  background: var(--clawd-green);
+  color: #0a0a0a;
+  border: none;
+  box-shadow: 0 0 16px var(--clawd-glow-green);
+}
+
+.message.user,
+.chat-bubble.user {
+  background: var(--clawd-purple);
+  color: #fff;
+}
+
+.brand-mark {
+  filter: drop-shadow(0 0 12px var(--clawd-glow-purple));
+}
+/* Domains footer for Clawd Superdesign */
+.clawd-domains { display:flex; gap:1rem; flex-wrap:wrap; font-size:0.75rem; letter-spacing:0.06em; text-transform:uppercase; color:var(--clawd-muted); }
+.clawd-domains a { color:var(--clawd-green); text-decoration:none; }
+.clawd-domains a:hover { color:var(--clawd-purple); }
+.clawd-studio { color:var(--clawd-purple); font-weight:600; }
