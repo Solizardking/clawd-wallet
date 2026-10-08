@@ -76,6 +76,11 @@ This is a wallet. It's self-custodial:
   trust, and keep only small balances in a wallet that has it turned on.
 - Back up your seed phrase offline. If you lose it, nobody can recover the wallet.
 - This is unaudited, pre-1.0 software. Use at your own risk.
+- **AI-accelerated cryptanalysis:** see [SECURITY.md](SECURITY.md) for the full posture. The short version:
+  key derivation and vault encryption are hash-based (no exploitable mathematical structure);
+  signing is Ed25519 because Solana requires it; there are zero lattice-based constructions in the
+  wallet. Do not rush to move funds — use fresh addresses when convenient, and for multisig setups
+  gather confirmations offchain where possible.
 
 `src/wallet/keyring.vectors.ts` contains a **public test mnemonic** from a reference extension's
 test suite. It's only there to check derivation. Never send funds to it.
