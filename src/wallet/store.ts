@@ -6,8 +6,7 @@ export type PersistedConfig = {
   selectedAccount: string | null;
   selectedNetwork: Network;
   authorizedOrigins: string[];
-  // Computer-use / agent mode: auto-approve provider requests from authorized
-  // origins so an autonomous agent can transact without manual popup clicks.
+  // Deprecated compatibility field. Automatic approvals are disabled.
   agentMode: boolean;
   /** Helmsman control-plane API (site the user downloaded the extension from). */
   helmsmanApiUrl?: string;
@@ -56,7 +55,7 @@ export async function saveVault(vault: EncryptedVault): Promise<void> {
 
 export async function loadConfig(): Promise<PersistedConfig> {
   const out = await chrome.storage.local.get(CONFIG_KEY);
-  return { ...DEFAULT_CONFIG, ...(out[CONFIG_KEY] as Partial<PersistedConfig>) };
+  return { ...DEFAULT_CONFIG, ...(out[CONFIG_KEY] as Partial<PersistedConfig>), agentMode: false };
 }
 
 export async function saveConfig(config: PersistedConfig): Promise<void> {

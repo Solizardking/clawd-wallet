@@ -174,27 +174,7 @@ async function renderWallet(state: PopupState) {
   });
   app.append(el("div", { class: "row spread" }, [el("span", { class: "muted" }, ["Network"]), select]));
 
-  // Computer-use / Agent mode toggle
-  const agentBtn = el("button", { class: state.agentMode ? "primary" : "ghost" }, [
-    state.agentMode ? "Computer-use: ON" : "Computer-use: OFF",
-  ]);
-  agentBtn.addEventListener("click", async () => {
-    await rpc("popup_setAgentMode", { enabled: !state.agentMode });
-    render();
-  });
-  app.append(
-    el("div", { class: "row spread" }, [
-      el("span", { class: "muted" }, ["Agent mode"]),
-      agentBtn,
-    ]),
-  );
-  if (state.agentMode) {
-    app.append(
-      el("div", { class: "banner" }, [
-        "Computer-use mode is ON: connection and signing requests from connected sites are auto-approved so an agent can transact hands-free.",
-      ]),
-    );
-  }
+  app.append(el("div", { class: "banner" }, ["Connections, signing and transfers require your approval."]));
 
   // Accounts
   const list = el("div", { class: "card" }, [el("h2", {}, ["Accounts"])]);

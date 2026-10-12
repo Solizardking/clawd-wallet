@@ -7,7 +7,7 @@ export const SOLANA_REQUEST_CHANNEL = "helmsman-solana";
 export const SOLANA_REPLY_CHANNEL = "helmsman-solana-reply";
 export const SOLANA_EVENT_CHANNEL = "helmsman-solana-event";
 
-// Legacy Helmsman agent channel (window.helmsman), preserved.
+// Legacy Helmsman agent channel: requests receive a disabled-command error.
 export const HELMSMAN_CHANNEL = "helmsman";
 export const HELMSMAN_REPLY_CHANNEL = "helmsman-reply";
 

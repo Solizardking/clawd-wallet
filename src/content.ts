@@ -12,30 +12,18 @@ script.src = chrome.runtime.getURL("injected.js");
 script.type = "module";
 (document.head || document.documentElement).appendChild(script);
 
-// Relay page -> background for both channels.
+// Only the Solana provider channel can reach background commands.
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const data = event.data;
   if (!data) return;
 
   if (data.channel === HELMSMAN_CHANNEL) {
-    chrome.runtime.sendMessage(data.msg, (response) => {
-      const err = chrome.runtime.lastError;
-      window.postMessage(
-        {
-          channel: HELMSMAN_REPLY_CHANNEL,
-          id: data.id,
-          // injected.ts resolves `result` / rejects `error` — never `response`
-          result: err ? undefined : response?.result ?? response,
-          error: err
-            ? { message: err.message }
-            : response?.error
-              ? { message: response.error.message ?? String(response.error) }
-              : undefined,
-        },
-        "*",
-      );
-    });
+    window.postMessage({
+      channel: HELMSMAN_REPLY_CHANNEL,
+      id: data.id,
+      error: { code: 4200, message: "Legacy backend commands are disabled until a secure per-request consent flow is implemented. Use the Solana provider for wallet requests." },
+    }, "*");
     return;
   }
 
@@ -43,12 +31,13 @@ window.addEventListener("message", (event) => {
     chrome.runtime.sendMessage(
       { type: "solana:request", id: data.id, method: data.method, params: data.params },
       (response) => {
+        const err = chrome.runtime.lastError;
         window.postMessage(
           {
             channel: SOLANA_REPLY_CHANNEL,
             id: data.id,
             result: response?.result,
-            error: response?.error,
+            error: err ? { message: err.message } : response?.error,
           },
           "*",
         );

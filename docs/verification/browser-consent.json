@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-10-07T23:36:06.301Z",
+  "version": "0.3.1",
+  "profile": "disposable and removed",
+  "installedInUserProfile": false,
+  "normalConnectionApproval": true,
+  "signingApprovalAndRejection": true,
+  "fixtureSignatureVerified": true,
+  "legacyCommandsBlocked": true,
+  "http402Preserved": true,
+  "captures": 0,
+  "legacyBackendCalls": 0,
+  "fundedTransactions": false
+}

@@ -2,12 +2,13 @@
 
 ## Store listing copy
 **Name:** Clawd Wallet
-**Short description (132 chars max):** Solana Clawd / SolGPT wallet for agentic trading. Quote before pay (x402). Superintelligent Design. Never stores your seed in chat.
+**Short description (132 chars max):** Solana Clawd / SolGPT wallet with approval for connections, signing and transfers. Superintelligent Design.
 **Detailed description:**
 Clawd Wallet is the Solana-native extension for the SolGPT trading desk and Helmsman agentic wallet.
 
 - Connect as `window.solana` for swaps and computer-use sessions
-- x402 quote-before-pay (https://x402.life) — staged payments are not settled until you sign
+- Signing and transfers require approval in the wallet popup
+- Legacy backend payments, signing and screenshot commands are disabled pending a secure consent flow
 - Desk: https://solgpt.trade
 - Brand: Superintelligent Design
 
@@ -24,11 +25,11 @@ Clawd never stores seed phrases, private keys, or passwords in chat or agent mem
 2. `npm run pack` to rebuild `dist/` and zip.
 3. Upload `helmsman-extension.zip` (or the pack output).
 4. Category: Productivity / Developer tools. Regions: public / unlisted as you prefer.
-5. Privacy: single purpose (Solana wallet + agent approve). Host permissions are for RPC and x402.
+5. Privacy: single purpose (Solana wallet with explicit approval). Host permissions are for RPC. Automatic payments and screenshots are disabled.
 6. Submit for review.
 
 ## Load unpacked
-1. `npm install && npm run build` (from the repo root)
+1. `npm ci && npm run build` (from the repo root)
 2. Chrome → `chrome://extensions` → Developer mode on
 3. Load unpacked → select the `dist/` folder
 4. Pin Clawd Wallet

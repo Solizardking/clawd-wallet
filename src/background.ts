@@ -31,6 +31,7 @@ import {
   type DerivedAccount,
 } from "./wallet/keyring.js";
 import { encryptVault, decryptVault } from "./wallet/vault.js";
+import { LEGACY_COMMAND_ERROR, providerOrigin, requirePopupSender } from "./request-policy.js";
 import {
   clearSession,
   loadConfig,
@@ -183,13 +184,16 @@ async function openPopupWindow(): Promise<void> {
 }
 
 function pendingViews(): PendingActionView[] {
-  return [...pendingActions.values()].map(({ id, type, origin, tabId, message, signers }) => ({
+  return [...pendingActions.values()].map(({ id, type, origin, tabId, message, signers, transaction, to, amountSol }) => ({
     id,
     type,
     origin,
     tabId,
     message,
     signers,
+    transaction,
+    to,
+    amountSol,
   }));
 }
 
@@ -208,27 +212,12 @@ function enqueueAction(
   return new Promise((resolve, reject) => {
     const id = newId();
     pendingActions.set(id, { id, type, origin, ...extra, resolve, reject });
-    // Computer-use / agent mode: auto-approve without a popup. request_accounts
-    // is always eligible (it authorizes the origin); other actions require the
-    // origin to already be authorized so a site must connect first.
-    void (async () => {
-      const cfg = await loadConfig();
-      const eligible =
-        cfg.agentMode &&
-        (type === "request_accounts" || cfg.authorizedOrigins.includes(origin));
-      if (eligible) {
-        try {
-          await approveAction(id);
-        } catch (err) {
-          const e = err as { code?: number; message?: string };
-          const a = pendingActions.get(id);
-          a?.reject({ code: e.code, message: e.message ?? String(err) });
-          pendingActions.delete(id);
-        }
-        return;
-      }
-      void openPopupWindow();
-    })();
+    // Every new connection and signing/transfer request needs popup consent,
+    // including wallets that previously persisted agentMode=true.
+    void openPopupWindow().catch(() => {
+      pendingActions.delete(id);
+      reject({ code: 4001, message: "Could not open the approval window" });
+    });
   });
 }
 
@@ -374,6 +363,7 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
       return cfg.selectedNetwork;
 
     case "wallet_requestAccounts": {
+      if (!unlocked) throw { code: 4100, message: "Wallet is locked. Unlock it in the wallet popup first." };
       const params = (req.params ?? {}) as { promptAuthorization?: boolean };
       const state = await walletState();
       if (cfg.authorizedOrigins.includes(origin) && state === "unlocked") {
@@ -473,7 +463,23 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
 async function approveAction(id: string): Promise<void> {
   const action = pendingActions.get(id);
   if (!action) return;
+  // Consume the action once, before awaiting storage or RPC. Double clicks must
+  // not execute a transfer twice.
+  pendingActions.delete(id);
+  try {
+    await resolveApprovedAction(action);
+  } catch (err) {
+    const e = err as { code?: number; message?: string };
+    action.reject({ code: e.code, message: e.message ?? String(err) });
+  }
+}
+
+async function resolveApprovedAction(action: PendingAction): Promise<void> {
   const cfg = await loadConfig();
+  if (!unlocked || (action.type !== "request_accounts" && !cfg.authorizedOrigins.includes(action.origin))) {
+    action.reject({ code: 4100, message: !unlocked ? "Wallet is locked" : "Origin authorization was revoked" });
+    return;
+  }
 
   if (action.type === "request_accounts") {
     if (!cfg.authorizedOrigins.includes(action.origin)) {
@@ -481,7 +487,6 @@ async function approveAction(id: string): Promise<void> {
       await saveConfig(cfg);
     }
     action.resolve({ accounts: accountAddresses() } as RequestAccountsResp);
-    pendingActions.delete(id);
     await broadcast("accountsChanged", accountAddresses());
     return;
   }
@@ -493,7 +498,6 @@ async function approveAction(id: string): Promise<void> {
     const bytes = new TextEncoder().encode(action.message ?? "");
     const signature = signMessageBytes(signer, bytes);
     action.resolve({ publicKey: signer, signature: bs58.encode(signature) });
-    pendingActions.delete(id);
     return;
   }
 
@@ -506,7 +510,6 @@ async function approveAction(id: string): Promise<void> {
       signature: bs58.encode(signMessageBytes(address, messageBytes)),
     }));
     action.resolve({ signatureResults } as SignTransactionResp);
-    pendingActions.delete(id);
     return;
   }
 
@@ -518,7 +521,6 @@ async function approveAction(id: string): Promise<void> {
       const e = err as { code?: number; message?: string };
       action.reject({ code: e.code, message: e.message ?? String(err) });
     }
-    pendingActions.delete(id);
     return;
   }
 
@@ -530,7 +532,6 @@ async function approveAction(id: string): Promise<void> {
       const e = err as { code?: number; message?: string };
       action.reject({ code: e.code, message: e.message ?? String(err) });
     }
-    pendingActions.delete(id);
     return;
   }
 
@@ -543,7 +544,6 @@ async function approveAction(id: string): Promise<void> {
       const e = err as { code?: number; message?: string };
       action.reject({ code: e.code, message: e.message ?? String(err) });
     }
-    pendingActions.delete(id);
     return;
   }
 }
@@ -727,9 +727,7 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
     }
 
     case "popup_setAgentMode": {
-      const { enabled } = (req.params ?? {}) as { enabled?: boolean };
-      await saveConfig({ ...cfg, agentMode: Boolean(enabled) });
-      return { agentMode: Boolean(enabled) };
+      throw { code: 4200, message: "Automatic approval is disabled. Each wallet request requires approval." };
     }
 
     case "popup_listActions":
@@ -771,71 +769,13 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
   }
 }
 
-// ---- Helmsman agent relays (preserve window.helmsman behavior) ----
-
-async function handleHelmsmanRelay(msg: {
-  type: string;
-  payload?: unknown;
-}): Promise<unknown> {
-  switch (msg.type) {
-    case "health": {
-      const API = await helmsmanApi();
-      return (await fetch(`${API}/api/health`)).json();
-    }
-    case "computer": {
-      const API = await helmsmanApi();
-      return (await fetch(`${API}/api/computer`)).json();
-    }
-    case "sign": {
-      const API = await helmsmanApi();
-      return (
-        await fetch(`${API}/api/sign/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(msg.payload),
-        })
-      ).json();
-    }
-    case "pay": {
-      const API = await helmsmanApi();
-      return (
-        await fetch(`${API}/api/pay/request`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(msg.payload),
-        })
-      ).json();
-    }
-    case "vision": {
-      // Agent eyes: capture the current visible tab and analyze it for trading.
-      const payload = (msg.payload ?? {}) as { note?: string };
-      let dataUrl: string;
-      try {
-        dataUrl = await chrome.tabs.captureVisibleTab({ format: "jpeg", quality: 70 });
-      } catch (err) {
-        return { error: `screen capture failed: ${err instanceof Error ? err.message : String(err)}` };
-      }
-      const API = await helmsmanApi();
-      return (
-        await fetch(`${API}/api/vision/trade`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: dataUrl, note: payload.note }),
-        })
-      ).json();
-    }
-    default:
-      return { error: "unknown" };
-  }
-}
-
 // ---- Message router ----
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   void (async () => {
     try {
       if (msg?.type === "solana:request") {
-        const origin = sender.origin ?? (sender.url ? new URL(sender.url).origin : "unknown");
+        const origin = providerOrigin(sender);
         const result = await handleProviderRequest(
           msg as ProviderRequest,
           origin,
@@ -845,12 +785,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       if (msg?.type === "popup:request") {
+        requirePopupSender(sender);
         const result = await handlePopupRequest(msg as PopupRequest);
         sendResponse({ result });
         return;
       }
-      // Legacy Helmsman agent relay (health/computer/sign/pay).
-      sendResponse(await handleHelmsmanRelay(msg));
+      // Reject even direct runtime calls from stale content scripts. No backend
+      // fetch, signing, payment or screen capture may precede consent.
+      throw LEGACY_COMMAND_ERROR;
     } catch (err) {
       const e = err as { code?: number; message?: string };
       sendResponse({ error: { code: e.code, message: e.message ?? String(err) } });

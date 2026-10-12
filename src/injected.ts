@@ -2,8 +2,6 @@ import type { ProviderEvent, WalletMethod } from "./protocol.js";
 
 // Channel names are inlined (kept in sync with src/protocol.ts) so this injected
 // module stays self-contained with no shared Rollup chunk.
-const HELMSMAN_CHANNEL = "helmsman";
-const HELMSMAN_REPLY_CHANNEL = "helmsman-reply";
 const SOLANA_REQUEST_CHANNEL = "helmsman-solana";
 const SOLANA_REPLY_CHANNEL = "helmsman-solana-reply";
 const SOLANA_EVENT_CHANNEL = "helmsman-solana-event";
@@ -147,20 +145,19 @@ Object.defineProperty(window, "solana", { value: solana, writable: false, config
 window.dispatchEvent(new Event("solana#initialized"));
 
 // ---------------------------------------------------------------------------
-// window.helmsman — agent control surface (preserved) + x402 auto-pay hook.
+// window.clawd / window.helmsman — aliases for consent-gated Solana requests.
 // ---------------------------------------------------------------------------
 
-function helmsmanCall(msg: unknown): Promise<unknown> {
-  return request(HELMSMAN_CHANNEL, HELMSMAN_REPLY_CHANNEL, { msg });
+function legacyDisabled(): never {
+  throw Object.assign(new Error("Legacy backend commands are disabled until a secure per-request consent flow is implemented. Use the Solana provider for wallet requests."), { code: 4200 });
 }
 
 // window.helmsman — agent/computer-use control surface. Wallet actions are
-// backed by the real Solana provider so an autonomous agent (e.g. in a
-// computer-use session) can read accounts, sign, and transact programmatically.
-// Pair with the extension's "Computer-use / Agent mode" to auto-approve.
+// backed by the Solana provider. Connection, signing and transfers require
+// wallet approval. Legacy backend relays remain disabled.
 const clawd = {
   name: "Clawd",
-  version: "0.3.0",
+  version: "0.3.1",
   native: "solana",
   isClawd: true,
   isHelmsman: true, // backward compatible
@@ -193,18 +190,18 @@ const clawd = {
   },
   // --- Clawd / Helmsman API relays ---
   async snapshot() {
-    return helmsmanCall({ type: "computer" });
+    return legacyDisabled();
   },
-  // Agent eyes: capture the current tab and get a vision-based trade suggestion.
+  // Reserved until a secure consent flow exists; no screenshot is captured.
   async see(note?: string) {
-    return helmsmanCall({ type: "vision", payload: { note } });
+    return legacyDisabled();
   },
   async signMessage(message: string, chain = "solana") {
     if (chain === "solana") return solana.signMessage(message);
-    return helmsmanCall({ type: "sign", payload: { chain, message } });
+    return legacyDisabled();
   },
   async pay(url: string, method = "GET", body?: string) {
-    return helmsmanCall({ type: "pay", payload: { url, method, body } });
+    return legacyDisabled();
   },
 };
 
@@ -213,18 +210,4 @@ Object.defineProperty(window, "helmsman", { value: clawd, writable: false, confi
 window.dispatchEvent(new Event("clawd#initialized"));
 window.dispatchEvent(new Event("helmsman#initialized"));
 
-// x402: transparently pay-and-retry on HTTP 402 responses.
-const originalFetch = window.fetch.bind(window);
-window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-  const res = await originalFetch(input, init);
-  if (res.status !== 402) return res;
-  const url =
-    typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-  const paid = (await clawd.pay(
-    url,
-    (init?.method as string) ?? "GET",
-    typeof init?.body === "string" ? init.body : undefined,
-  )) as { error?: string };
-  if (paid?.error) return res;
-  return originalFetch(input, init);
-};
+// HTTP 402 responses remain untouched. Payments need an explicit consent flow.
