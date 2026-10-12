@@ -8,8 +8,9 @@
 //   npm run box:launch -- --screenshots DIR  # headless: fresh test wallet, popup + consent screenshots
 //
 // Options: --headless, --keep-profile, --profile DIR (default: new temp dir, deleted on exit)
-// The profile starts empty (no wallet). --screenshots creates a brand-new, unfunded
-// test wallet inside the throwaway profile; its recovery phrase is never printed.
+// The default temp profile starts empty (no wallet). --screenshots creates a brand-new,
+// unfunded test wallet there; its recovery phrase is never printed. --profile DIR reuses
+// that directory as-is (it may already hold a wallet); never pass a funded/personal profile.
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
@@ -89,7 +90,11 @@ try {
         await popup.getByPlaceholder("New password (min 8 chars)").fill(password);
         await popup.getByPlaceholder("Confirm password").fill(password);
         await popup.getByRole("button", { name: "Create new wallet" }).click();
-        await popup.getByRole("button", { name: /I saved it/ }).click();
+        const saved = popup.getByRole("button", { name: /I saved it/ });
+        await saved.waitFor({ timeout: 60000 }).catch(async (e) => {
+          throw new Error(`wallet creation did not reach the backup step: ${(await popup.locator(".error, [role=alert]").allInnerTexts().catch(() => [])).join(" ") || (await popup.locator("body").innerText()).slice(0, 300) || e.message}`);
+        });
+        await saved.click(); // the phrase on the backup step is never captured or printed
         await popup.getByRole("button", { name: "Lock", exact: true }).waitFor();
         await popup.waitForTimeout(800);
         await popup.screenshot({ path: join(out, "popup-wallet.png") });

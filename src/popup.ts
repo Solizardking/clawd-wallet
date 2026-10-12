@@ -53,8 +53,15 @@ function showError(message: string) {
 
 // ---- Screens ----
 
+// While the one-time recovery phrase is on screen, background state broadcasts
+// (createWallet emits stateChanged) must not re-render it away.
+let showingBackup = false;
+
 async function render() {
   const state = await rpc<PopupState>("popup_getState");
+  // A render started by a stateChanged broadcast can resolve after the backup
+  // screen is shown; never let it replace the one-time recovery phrase.
+  if (showingBackup) return;
   clear();
 
   if (isNotification && state.pendingActions.length > 0) {
@@ -119,6 +126,7 @@ function renderWelcome() {
 }
 
 function renderBackup(mnemonic: string) {
+  showingBackup = true;
   clear();
   app.append(
     el("h1", {}, ["Back up your phrase"]),
@@ -126,7 +134,10 @@ function renderBackup(mnemonic: string) {
     el("div", { class: "mnemonic" }, [mnemonic]),
   );
   const done = el("button", { class: "primary" }, ["I saved it — continue"]);
-  done.addEventListener("click", () => render());
+  done.addEventListener("click", () => {
+    showingBackup = false;
+    void render();
+  });
   app.append(done);
 }
 
@@ -352,7 +363,7 @@ render().catch((e) => showError((e as Error).message));
 
 // Keep the notification popup fresh if new actions arrive.
 chrome.runtime.onMessage?.addListener((msg) => {
-  if (msg?.type === "solana:event" && msg.event === "stateChanged") render();
+  if (msg?.type === "solana:event" && msg.event === "stateChanged" && !showingBackup) render();
 });
 
 export type { Network };

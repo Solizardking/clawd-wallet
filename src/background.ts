@@ -393,7 +393,8 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
         throw { code: 4100, message: "Unauthorized origin" };
       }
       const params = (req.params ?? {}) as { message?: string; display?: string };
-      if (!params.message) throw { code: -32602, message: "message required" };
+      if (typeof params.message !== "string" || !params.message)
+        throw { code: -32602, message: "message must be a non-empty UTF-8 string" };
       return (await enqueueAction("sign_message", origin, {
         tabId,
         message: params.message,
