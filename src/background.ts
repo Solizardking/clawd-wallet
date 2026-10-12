@@ -188,6 +188,13 @@ async function openPopupWindow(): Promise<void> {
   notificationWindowId = win?.id ?? null;
 }
 
+// The notification popup closes itself once its queue is empty. Forget it right
+// away so the next request opens a fresh consent window instead of trying to
+// focus a window that is already tearing down.
+function releaseDrainedPopup(): void {
+  if (pendingActions.size === 0) notificationWindowId = null;
+}
+
 function pendingViews(): PendingActionView[] {
   return [...pendingActions.values()].map(({ id, type, origin, tabId, message, signers, transaction, to, amountSol }) => ({
     id,
@@ -471,6 +478,7 @@ async function approveAction(id: string): Promise<void> {
   // Consume the action once, before awaiting storage or RPC. Double clicks must
   // not execute a transfer twice.
   pendingActions.delete(id);
+  releaseDrainedPopup();
   try {
     await resolveApprovedAction(action);
   } catch (err) {
@@ -558,6 +566,7 @@ function declineAction(id: string): void {
   if (!action) return;
   action.reject({ code: 4001, message: "User rejected the request" });
   pendingActions.delete(id);
+  releaseDrainedPopup();
 }
 
 // ---- Popup RPC ----
