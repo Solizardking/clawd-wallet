@@ -109,7 +109,7 @@ try {
   assert.equal(nacl.sign.detached.verify(new TextEncoder().encode('public test message'), bs58.decode(signed.signature), bs58.decode(account)), true);
   const effects = await worker.evaluate(() => ({ captures: globalThis.securityTest.captures, legacyBackendCalls: globalThis.securityTest.legacyBackendCalls }));
   assert.deepEqual(effects, { captures: 0, legacyBackendCalls: 0 });
-  const report = { checkedAt: new Date().toISOString(), version: '0.3.1', profile: 'disposable and removed', installedInUserProfile: false, normalConnectionApproval: true, signingApprovalAndRejection: true, fixtureSignatureVerified: true, legacyCommandsBlocked: true, http402Preserved: true, ...effects, fundedTransactions: false };
+  const report = { checkedAt: new Date().toISOString(), version: '0.3.2', profile: 'disposable and removed', installedInUserProfile: false, normalConnectionApproval: true, signingApprovalAndRejection: true, fixtureSignatureVerified: true, legacyCommandsBlocked: true, http402Preserved: true, ...effects, fundedTransactions: false };
   await writeFile(join(artifacts, 'browser-consent.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } finally {

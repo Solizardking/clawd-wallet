@@ -157,7 +157,7 @@ function legacyDisabled(): never {
 // wallet approval. Legacy backend relays remain disabled.
 const clawd = {
   name: "Clawd",
-  version: "0.3.1",
+  version: "0.3.2",
   native: "solana",
   isClawd: true,
   isHelmsman: true, // backward compatible
