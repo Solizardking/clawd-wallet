@@ -77,7 +77,7 @@ try {
     const opened = context.waitForEvent('page', { timeout: 15000 });
     await page.evaluate(({ method, value }) => {
       globalThis.walletTestResult = null;
-      const request = method === 'connect' ? window.solana.connect() : window.solana.signMessage(value);
+      const request = method === 'connect' ? window.solana.connect() : window.solana.signMessage(method === 'signBytes' ? new TextEncoder().encode(value) : value);
       request.then(result => { globalThis.walletTestResult = { result }; }, error => { globalThis.walletTestResult = { error: error.message }; });
     }, { method, value });
     const popup = await opened.catch(async error => {
@@ -101,7 +101,9 @@ try {
   await page.waitForFunction(() => globalThis.walletTestResult !== null);
   assert.match((await page.evaluate(() => globalThis.walletTestResult)).error, /User rejected/);
 
-  const signPopup = await startAction('sign', 'public test message');
+  // Phantom-style dApps pass UTF-8 bytes; the prompt must show the text, not "[object Object]".
+  const signPopup = await startAction('signBytes', 'public test message');
+  assert.match(await signPopup.locator('body').innerText(), /public test message/);
   await signPopup.screenshot({ path: join(artifacts, 'message-approval.png') });
   await signPopup.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForFunction(() => globalThis.walletTestResult !== null);

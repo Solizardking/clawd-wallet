@@ -81,10 +81,22 @@ class SolanaProvider {
     return this.request({ method: "wallet_getCluster" });
   }
 
-  async signMessage(message: string): Promise<{ publicKey: string; signature: string }> {
+  async signMessage(message: string | Uint8Array): Promise<{ publicKey: string; signature: string }> {
+    // dApps usually pass UTF-8 bytes (Phantom-style). The wallet shows and signs
+    // the message as UTF-8 text, so decode bytes strictly instead of letting
+    // them serialize to "[object Object]".
+    let text: string;
+    if (typeof message === "string") text = message;
+    else if (message instanceof Uint8Array) {
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(message);
+      } catch {
+        throw { code: -32602, message: "signMessage only supports UTF-8 text messages" };
+      }
+    } else throw { code: -32602, message: "signMessage expects a string or Uint8Array" };
     return (await this.request({
       method: "wallet_signMessage",
-      params: { message },
+      params: { message: text },
     })) as { publicKey: string; signature: string };
   }
 

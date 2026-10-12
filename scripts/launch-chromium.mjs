@@ -89,7 +89,11 @@ try {
         await popup.getByPlaceholder("New password (min 8 chars)").fill(password);
         await popup.getByPlaceholder("Confirm password").fill(password);
         await popup.getByRole("button", { name: "Create new wallet" }).click();
-        await popup.getByRole("button", { name: /I saved it/ }).click();
+        const saved = popup.getByRole("button", { name: /I saved it/ });
+        await saved.waitFor({ timeout: 60000 }).catch(async (e) => {
+          throw new Error(`wallet creation did not reach the backup step: ${(await popup.locator(".error, [role=alert]").allInnerTexts().catch(() => [])).join(" ") || (await popup.locator("body").innerText()).slice(0, 300) || e.message}`);
+        });
+        await saved.click(); // the phrase on the backup step is never captured or printed
         await popup.getByRole("button", { name: "Lock", exact: true }).waitFor();
         await popup.waitForTimeout(800);
         await popup.screenshot({ path: join(out, "popup-wallet.png") });
