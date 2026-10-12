@@ -96,7 +96,7 @@ Web pages can't call the popup's own commands (`popup_*`). A forged request from
 1. Get a built extension: this repo's `dist/` folder, or run `npm run pack` and unzip `helmsman-extension.zip` (the zip isn't committed).
 2. Open `chrome://extensions` in Chrome or any Chromium browser (Brave, Edge, Arc).
 3. Turn on **Developer mode** (top right).
-4. Click **Load unpacked** and pick `dist/` (or the unzipped `helmsman-extension/` folder that holds `manifest.json`).
+4. Click **Load unpacked** and pick `dist/` (or the folder you unzip `helmsman-extension.zip` into (`manifest.json` is at the zip root)).
 5. Pin **Clawd Wallet** from the puzzle-piece menu.
 
 > [!NOTE]
@@ -125,7 +125,7 @@ npm run pack                      # optional: build + write helmsman-extension.z
 
 `npm run pack` writes `dist/config.json` from env vars:
 
-- `HELMSMAN_PUBLIC_URL`: agent/backend API URL (default `http://localhost:8787`)
+- `HELMSMAN_PUBLIC_URL`: Clawd Wallet API base URL (default `https://musebook.trade/wallet`)
 - `HELMSMAN_RPC_URL`: optional custom Solana RPC URL
 
 If no `rpcUrl` is set, the wallet uses the public `https://api.mainnet-beta.solana.com`. You can also set a custom RPC and backend URL in the popup's settings. Don't commit an RPC URL that contains a private API key.
@@ -161,10 +161,9 @@ Any dApp that looks for `window.solana` can connect. Each new origin still needs
 | Permission | Why |
 | --- | --- |
 | `storage` | Saves your encrypted vault, accounts, network and settings locally on your device. |
-| `activeTab`, `tabs` | Existing tab permissions; sender metadata identifies the requesting site. Screenshot commands are disabled. |
 | Content script on `http://*/*`, `https://*/*` | Injects the `window.solana` provider so dApps can detect and connect to the wallet. |
 | `injected.js` web-accessible resource | The provider script that's injected into the page. |
-| Host permissions `https://*/*`, `http://*/*`, `http://localhost:8787/*` | Lets the wallet talk to the Solana RPC you choose. Legacy backend payment/signing relays are disabled. |
+| Host permissions `https://*/*`, `http://*/*` | Lets the wallet talk to the Solana RPC you choose. Legacy backend payment/signing relays are disabled. |
 
 ## 🗂️ Project layout
 

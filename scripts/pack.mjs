@@ -8,7 +8,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
 const zipName = "helmsman-extension.zip";
 const zipPath = join(root, zipName);
-const folder = "helmsman-extension";
 
 function walk(dir) {
   const out = [];
@@ -29,13 +28,14 @@ export function packExtensionZip({ build = false } = {}) {
     throw new Error("dist/manifest.json missing — run npm run build");
   }
 
-  const apiUrl = (process.env.HELMSMAN_PUBLIC_URL || "http://localhost:8787").replace(/\/$/, "");
+  const apiUrl = (process.env.HELMSMAN_PUBLIC_URL || "https://musebook.trade/wallet").replace(/\/$/, "");
   const rpcUrl = (process.env.HELMSMAN_RPC_URL || "").trim();
   const packed = rpcUrl ? { apiUrl, rpcUrl } : { apiUrl };
   writeFileSync(join(dist, "config.json"), `${JSON.stringify(packed, null, 2)}\n`);
 
-  const files = walk(dist).map((abs) => ({
-    name: `${folder}/${relative(dist, abs)}`,
+  const files = walk(dist).filter((abs) => !abs.endsWith(".md")).map((abs) => ({
+    // manifest.json must sit at the zip root for the Chrome Web Store.
+    name: relative(dist, abs).split("\\").join("/"),
     data: readFileSync(abs),
   }));
   writeStoreZip(files, zipPath);

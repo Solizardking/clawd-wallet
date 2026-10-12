@@ -46,7 +46,7 @@ import {
 // globalThis.Buffer is required by @solana/web3.js and bip39 in a bundled SW.
 (globalThis as unknown as { Buffer: typeof Buffer }).Buffer ||= Buffer;
 
-const DEFAULT_HELMSMAN_API = "http://localhost:8787";
+const DEFAULT_HELMSMAN_API = "https://musebook.trade/wallet";
 
 async function packedApiUrl(): Promise<string | null> {
   try {
