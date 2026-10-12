@@ -142,7 +142,7 @@ npm run box:verify                         # headless: service worker up + windo
 npm run box:launch -- --screenshots ./shots  # headless: fresh unfunded test wallet → popup + consent screenshots
 ```
 
-Flags: `--headless`, `--keep-profile`, `--profile <dir>` (a named profile is kept). The profile starts with no wallet. Only `--screenshots` creates one: a new, unfunded test wallet in the throwaway profile. Its recovery phrase is never printed or saved. **Never import a funded wallet into an automation profile.**
+Flags: `--headless`, `--keep-profile`, `--profile <dir>` (a named profile is kept). The **default** temp profile starts with no wallet. Only `--screenshots` creates one there: a new, unfunded test wallet whose recovery phrase is never printed or saved. If you pass `--profile <dir>`, that directory is reused as-is (it may already hold a wallet), so do not point it at a funded or personal browser profile. **Never import a funded wallet into an automation profile.**
 
 ## 🌐 Works with
 

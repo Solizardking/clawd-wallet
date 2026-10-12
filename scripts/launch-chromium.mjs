@@ -8,8 +8,9 @@
 //   npm run box:launch -- --screenshots DIR  # headless: fresh test wallet, popup + consent screenshots
 //
 // Options: --headless, --keep-profile, --profile DIR (default: new temp dir, deleted on exit)
-// The profile starts empty (no wallet). --screenshots creates a brand-new, unfunded
-// test wallet inside the throwaway profile; its recovery phrase is never printed.
+// The default temp profile starts empty (no wallet). --screenshots creates a brand-new,
+// unfunded test wallet there; its recovery phrase is never printed. --profile DIR reuses
+// that directory as-is (it may already hold a wallet); never pass a funded/personal profile.
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";

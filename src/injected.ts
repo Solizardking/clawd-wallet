@@ -87,9 +87,14 @@ class SolanaProvider {
     // them serialize to "[object Object]".
     let text: string;
     if (typeof message === "string") text = message;
-    else if (message instanceof Uint8Array) {
+    else if (ArrayBuffer.isView(message)) {
+      // Realm-safe: iframe-created Uint8Arrays fail `instanceof` against this
+      // window's Uint8Array. Copy into a local view, then decode with ignoreBOM
+      // so a leading EF BB BF is kept (default TextDecoder strips it and the
+      // re-encoded signature would not match the dApp's original bytes).
+      const bytes = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
       try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(message);
+        text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
       } catch {
         throw { code: -32602, message: "signMessage only supports UTF-8 text messages" };
       }
