@@ -13,7 +13,12 @@ export type EncryptedVault = {
   ciphertext: string; // base64
 };
 
-const ITERATIONS = 200_000;
+// PBKDF2 round count. Padded upward per the AI-accelerated-cryptanalysis
+// posture (see SECURITY.md): hashes have no exploitable mathematical
+// structure, so if they ever worry us, the response is to pad round counts
+// first, not byte sizes. The vault format stores `iterations` per vault, so
+// vaults created at the old 200k count still decrypt.
+const ITERATIONS = 600_000;
 
 function toB64(bytes: Uint8Array): string {
   let bin = "";
