@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clawd Wallet",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Solana-native Clawd / SolGPT wallet with explicit approval for connections, signing and transfers. Superintelligent Design \u00b7 x402.life \u00b7 solgpt.trade",
   "icons": {
     "16": "icons/icon-16.png",

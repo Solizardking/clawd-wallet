@@ -165,11 +165,16 @@ async function notifyStateChanged(): Promise<void> {
 async function openPopupWindow(): Promise<void> {
   if (notificationWindowId !== null) {
     try {
-      const win = await chrome.windows.get(notificationWindowId);
-      if (win && win.id !== undefined) {
+      // A notification popup closes itself once its queue empties; Chrome can
+      // still report that window for a moment while it is tearing down. Only
+      // reuse it when it still hosts a live tab, otherwise open a fresh one so
+      // the new request is never left without a consent prompt.
+      const win = await chrome.windows.get(notificationWindowId, { populate: true });
+      if (win && win.id !== undefined && (win.tabs?.length ?? 0) > 0) {
         await chrome.windows.update(win.id, { focused: true });
         return;
       }
+      notificationWindowId = null;
     } catch {
       notificationWindowId = null;
     }
@@ -181,6 +186,13 @@ async function openPopupWindow(): Promise<void> {
     height: 600,
   });
   notificationWindowId = win?.id ?? null;
+}
+
+// The notification popup closes itself once its queue is empty. Forget it right
+// away so the next request opens a fresh consent window instead of trying to
+// focus a window that is already tearing down.
+function releaseDrainedPopup(): void {
+  if (pendingActions.size === 0) notificationWindowId = null;
 }
 
 function pendingViews(): PendingActionView[] {
@@ -466,6 +478,7 @@ async function approveAction(id: string): Promise<void> {
   // Consume the action once, before awaiting storage or RPC. Double clicks must
   // not execute a transfer twice.
   pendingActions.delete(id);
+  releaseDrainedPopup();
   try {
     await resolveApprovedAction(action);
   } catch (err) {
@@ -553,6 +566,7 @@ function declineAction(id: string): void {
   if (!action) return;
   action.reject({ code: 4001, message: "User rejected the request" });
   pendingActions.delete(id);
+  releaseDrainedPopup();
 }
 
 // ---- Popup RPC ----
