@@ -253,7 +253,7 @@ async function renderWallet(state: PopupState) {
 
   const api = el("input", {
     type: "url",
-    placeholder: "http://localhost:8787",
+    placeholder: "https://musebook.trade/wallet",
     value: state.helmsmanApiUrl,
   }) as HTMLInputElement;
   const saveApi = el("button", { class: "ghost" }, ["Save API"]);
