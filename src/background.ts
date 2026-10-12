@@ -165,11 +165,16 @@ async function notifyStateChanged(): Promise<void> {
 async function openPopupWindow(): Promise<void> {
   if (notificationWindowId !== null) {
     try {
-      const win = await chrome.windows.get(notificationWindowId);
-      if (win && win.id !== undefined) {
+      // A notification popup closes itself once its queue empties; Chrome can
+      // still report that window for a moment while it is tearing down. Only
+      // reuse it when it still hosts a live tab, otherwise open a fresh one so
+      // the new request is never left without a consent prompt.
+      const win = await chrome.windows.get(notificationWindowId, { populate: true });
+      if (win && win.id !== undefined && (win.tabs?.length ?? 0) > 0) {
         await chrome.windows.update(win.id, { focused: true });
         return;
       }
+      notificationWindowId = null;
     } catch {
       notificationWindowId = null;
     }
