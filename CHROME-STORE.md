@@ -2,7 +2,7 @@
 
 ## Store listing copy
 **Name:** Clawd Wallet
-**Short description (132 chars max):** Solana Clawd / SolGPT wallet with approval for connections, signing and transfers. Superintelligent Design.
+**Short description (132 chars max):** Clawd Wallet for Solana: you approve every connection, signature and transfer. Keys stay on your device.
 **Detailed description:**
 Clawd Wallet is the Solana-native extension for the SolGPT trading desk and Helmsman agentic wallet.
 
@@ -10,15 +10,20 @@ Clawd Wallet is the Solana-native extension for the SolGPT trading desk and Helm
 - Signing and transfers require approval in the wallet popup
 - Legacy backend payments, signing and screenshot commands are disabled pending a secure consent flow
 - Desk: https://solgpt.trade
-- Brand: Superintelligent Design
+- Transaction preview with SOL/token balance changes and risk warnings before you sign
+- Optional per-site auto-approve sessions with spend limits; locking ends every session
+- Ecosystem: https://clawdchain.trade · https://musebook.trade
+- Superintelligent Design
 
 Clawd never stores seed phrases, private keys, or passwords in chat or agent memory. Keys stay in the extension’s local storage on your device.
 
 ## Required assets (in this repo)
 - Icons: `public/icons/icon-16.png`, `icon-48.png`, `icon-128.png`
-- Promo / screenshots: `public/brand/solgpt-v2/clawd-ecosystem-banner.png`, `clawd-domains-lockup.png`, `clawd-superdesign-ui-mock.png`
-- Homepage: https://solgpt.trade
-- Support: https://x402.life
+- Screenshots (1280x800): `store-assets/0.5.1/screenshot-1..5.png`
+- Small promo tile (440x280): `store-assets/0.5.1/promo-small-440x280.png`
+- Marquee (1400x560): `store-assets/0.5.1/marquee-1400x560.png`
+- Homepage: https://clawdchain.trade/
+- Support: https://musebook.trade/
 
 ## Publish checklist
 1. Chrome Web Store developer account (one-time registration).
