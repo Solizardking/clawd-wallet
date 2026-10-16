@@ -31,8 +31,8 @@
   "typography": {
     "ui": "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     "mono": "ui-monospace, SFMono-Regular, Menlo, monospace",
-    "tagline": "SOLGPT · SUPERINTELLIGENT DESIGN",
-    "urlLine": "x402.life · solgpt.trade"
+    "tagline": "SUPERINTELLIGENT DESIGN",
+    "urlLine": "clawdchain.trade · musebook.trade"
   },
   "superdesignCssHooks": {
     "primaryButton": "background: #14F195; color: #0a0a0a;",

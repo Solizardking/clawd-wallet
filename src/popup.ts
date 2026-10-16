@@ -71,6 +71,7 @@ async function render() {
   // screen is shown; never let it replace the one-time recovery phrase.
   if (showingBackup) return;
   clear();
+  document.getElementById("hdr-actions")?.replaceChildren();
 
   if (isNotification && state.pendingActions.length > 0) {
     return renderApprovals(state);
@@ -167,21 +168,9 @@ function renderUnlock() {
 }
 
 async function renderWallet(state: PopupState) {
-  const header = el("div", { class: "row spread" }, [
-    el("h1", {}, ["Helmsman"]),
-    (() => {
-      const lock = el("button", { class: "ghost" }, ["Lock"]);
-      lock.addEventListener("click", async () => {
-        await rpc("popup_lockWallet");
-        render();
-      });
-      return lock;
-    })(),
-  ]);
-  app.append(header);
-
-  // Network selector
-  const select = el("select", {}) as HTMLSelectElement;
+  // Compact header: network + active account + lock live next to the brand.
+  const hdr = document.getElementById("hdr-actions");
+  const select = el("select", { "aria-label": "Network" }) as HTMLSelectElement;
   for (const n of state.availableNetworks) {
     const opt = el("option", { value: n.cluster }, [n.title]) as HTMLOptionElement;
     if (n.cluster === state.selectedNetwork.cluster) opt.selected = true;
@@ -191,7 +180,15 @@ async function renderWallet(state: PopupState) {
     await rpc("popup_changeNetwork", { cluster: select.value });
     render();
   });
-  app.append(el("div", { class: "row spread" }, [el("span", { class: "muted" }, ["Network"]), select]));
+  const lock = el("button", { class: "ghost" }, ["Lock"]);
+  lock.addEventListener("click", async () => {
+    await rpc("popup_lockWallet");
+    render();
+  });
+  const active = state.selectedAccount ?? state.accounts[0] ?? "";
+  const acct = el("span", { class: "acct", title: active }, [active ? `${active.slice(0, 4)}…${active.slice(-4)}` : ""]);
+  if (hdr) hdr.replaceChildren(acct, select, lock);
+  else app.append(el("div", { class: "row spread" }, [acct, select, lock]));
 
   app.append(el("div", { class: "banner" }, ["Connections, signing and transfers require your approval."]));
 

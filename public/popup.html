@@ -36,8 +36,13 @@
         filter: drop-shadow(0 0 8px rgba(153, 69, 255, 0.45));
       }
       h1 { font-size: 18px; margin: 0; letter-spacing: 0.04em; }
-      .sub { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
-      .sub a { color: var(--accent); text-decoration: none; }
+      .brand { padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+      .hdr-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+      .hdr-actions select { width: auto; margin: 0; padding: 4px 6px; font-size: 11px; }
+      .hdr-actions .acct { white-space: nowrap; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+      .foot { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); text-align: center; font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+      .foot-brand { color: #9945ff; margin-bottom: 2px; }
+      .foot a { color: var(--accent); text-decoration: none; }
       h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
       p { margin: 0 0 10px; }
       .muted { color: var(--muted); }
@@ -142,14 +147,16 @@
     </style>
   </head>
   <body>
-    <div class="brand">
+    <header class="brand">
       <img src="icons/icon-48.png" alt="Clawd" />
-      <div>
-        <h1>CLAWD</h1>
-        <div class="sub">SolGPT · <span style="color:#9945ff">Superintelligent Design</span><br /><a href="https://x402.life" target="_blank">x402.life</a> · <a href="https://solgpt.trade" target="_blank">solgpt.trade</a></div>
-      </div>
-    </div>
+      <h1>CLAWD</h1>
+      <div id="hdr-actions" class="hdr-actions"></div>
+    </header>
     <div id="app"></div>
+    <footer class="foot">
+      <div class="foot-brand">Superintelligent Design</div>
+      <div><a href="https://clawdchain.trade/" target="_blank" rel="noopener noreferrer">clawdchain.trade</a> · <a href="https://musebook.trade/" target="_blank" rel="noopener noreferrer">musebook.trade</a></div>
+    </footer>
     <script type="module" src="popup.js"></script>
   </body>
 </html>
