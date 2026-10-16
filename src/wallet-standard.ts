@@ -93,20 +93,73 @@ const FEATURES_ON_ACCOUNT = [
   "solana:signIn",
 ] as const;
 
-function makeAccount(address: string): WalletAccount {
-  return Object.freeze({
-    address,
-    publicKey: base58Decode(address),
-    chains: SUPPORTED_CHAINS,
-    features: FEATURES_ON_ACCOUNT,
-  }) as WalletAccount;
+// Read-only account object per the Wallet Standard reference wallet
+// (wallet-standard/packages/wallets/ghost/src/account.ts): private fields,
+// getters that return copies, frozen instance.
+export class ClawdWalletAccount implements WalletAccount {
+  readonly #address: string;
+  readonly #publicKey: Uint8Array;
+  get address() { return this.#address; }
+  get publicKey() { return this.#publicKey.slice(); }
+  get chains() { return SUPPORTED_CHAINS.slice(); }
+  get features() { return FEATURES_ON_ACCOUNT.slice(); }
+  get label() { return undefined; }
+  get icon() { return undefined; }
+  constructor(address: string) {
+    this.#address = address;
+    this.#publicKey = base58Decode(address);
+    if (new.target === ClawdWalletAccount) Object.freeze(this);
+  }
 }
+function makeAccount(address: string): WalletAccount {
+  return new ClawdWalletAccount(address);
+}
+
+// ---- clawd:capabilities (read-only, non-standard, namespaced) ----
+// Describes the wallet's guarantees and limits to apps and AI agents.
+// It grants nothing and never prompts. See docs/AGENT-WALLET-STANDARD.md.
+export const ClawdCapabilities = "clawd:capabilities" as const;
+export type ClawdCapabilitiesInfo = {
+  readonly humanApprovalRequired: true;
+  readonly silentSigning: false;
+  readonly transactionPreview: true;
+  readonly riskWarnings: readonly string[];
+  readonly autoApprove: {
+    readonly available: true;
+    readonly perSite: true;
+    readonly userInitiatedOnly: true;
+    readonly limits: readonly ("expiry" | "maxTotalSol" | "maxSolPerTx" | "allowedPrograms")[];
+    readonly endsOnLock: true;
+  };
+  readonly agentSession: { readonly available: false; readonly spec: string };
+  readonly legacyBackendCommands: "disabled";
+  readonly automaticPayments: false;
+};
+export type ClawdCapabilitiesFeature = {
+  readonly [ClawdCapabilities]: { readonly version: "1.0.0"; readonly getCapabilities: () => Promise<ClawdCapabilitiesInfo> };
+};
+const CAPABILITIES: ClawdCapabilitiesInfo = Object.freeze({
+  humanApprovalRequired: true,
+  silentSigning: false,
+  transactionPreview: true,
+  // Kept in sync with BLOCKING in src/tx/preview.ts (asserted by tests/wallet-standard-compliance.test.mjs).
+  riskWarnings: Object.freeze(["sim_failed", "could_not_simulate", "set_authority", "assign", "owner_change", "close_to_other",
+    "token_approve", "unlimited_approve", "delegate_set", "durable_nonce", "lookup_unresolved",
+    "nonce_authority", "loader_authority", "stake_authority", "not_a_transaction"]),
+  autoApprove: Object.freeze({
+    available: true, perSite: true, userInitiatedOnly: true,
+    limits: Object.freeze(["expiry", "maxTotalSol", "maxSolPerTx", "allowedPrograms"] as const), endsOnLock: true,
+  }),
+  agentSession: Object.freeze({ available: false, spec: "docs/AGENT-WALLET-STANDARD.md (clawd:agentSession, proposal)" }),
+  legacyBackendCommands: "disabled",
+  automaticPayments: false,
+}) as ClawdCapabilitiesInfo;
 
 export class ClawdStandardWallet implements Wallet {
   readonly version = "1.0.0" as const;
   readonly name = "Clawd Wallet";
   readonly icon = CLAWD_ICON as WalletIcon;
-  readonly chains = SUPPORTED_CHAINS;
+  get chains() { return SUPPORTED_CHAINS.slice(); }
   #accounts: WalletAccount[] = [];
   #listeners: { [E in StandardEventsNames]?: StandardEventsListeners[E][] } = {};
   #bridge: ClawdBridge;
@@ -125,7 +178,7 @@ export class ClawdStandardWallet implements Wallet {
   get accounts(): readonly WalletAccount[] { return this.#accounts.slice(); }
 
   get features(): StandardConnectFeature & StandardDisconnectFeature & StandardEventsFeature &
-    SolanaSignAndSendTransactionFeature & SolanaSignTransactionFeature & SolanaSignMessageFeature & SolanaSignInFeature {
+    SolanaSignAndSendTransactionFeature & SolanaSignTransactionFeature & SolanaSignMessageFeature & SolanaSignInFeature & ClawdCapabilitiesFeature {
     return {
       "standard:connect": { version: "1.0.0", connect: this.#connect },
       "standard:disconnect": { version: "1.0.0", disconnect: this.#disconnect },
@@ -138,6 +191,7 @@ export class ClawdStandardWallet implements Wallet {
       },
       "solana:signMessage": { version: "1.0.0", signMessage: this.#signMessage },
       "solana:signIn": { version: "1.0.0", signIn: this.#signIn },
+      [ClawdCapabilities]: { version: "1.0.0", getCapabilities: async () => CAPABILITIES },
     };
   }
 

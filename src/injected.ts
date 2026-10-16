@@ -2,6 +2,37 @@ import type { ProviderEvent, WalletMethod } from "./protocol.js";
 import { registerWallet } from "@wallet-standard/wallet";
 import { ClawdStandardWallet } from "./wallet-standard.js";
 
+// Never throw at injection. Another wallet (Phantom, Backpack, ...) may already
+// own window.solana as a non-configurable property; redefining it threw
+// "TypeError: Cannot redefine property: solana", aborted this script before
+// Wallet Standard registration and showed up in chrome://extensions Errors.
+// Double-injection guard: a non-enumerable Symbol.for key on window.
+const INJECTED = Symbol.for("clawd-wallet.injected");
+const alreadyInjected = (window as unknown as Record<symbol, unknown>)[INJECTED] === true;
+if (!alreadyInjected) {
+  try { Object.defineProperty(window, INJECTED, { value: true }); } catch { /* frozen window: continue */ }
+}
+
+/** Define window[key] only when it is free (or ours/configurable). Returns true when defined. */
+function defineGlobal(key: string, value: unknown): boolean {
+  try {
+    const existing = Object.getOwnPropertyDescriptor(window, key);
+    if (existing && (existing.value !== undefined || existing.get) && !existing.configurable) {
+      console.warn(`[Clawd Wallet] window.${key} is already provided by another wallet; leaving it untouched. Clawd Wallet is available via Wallet Standard.`);
+      return false;
+    }
+    if (existing && (existing.value !== undefined || existing.get)) {
+      console.warn(`[Clawd Wallet] window.${key} is already set by another wallet; leaving it untouched.`);
+      return false;
+    }
+    Object.defineProperty(window, key, { value, writable: false, configurable: true });
+    return true;
+  } catch (e) {
+    console.warn(`[Clawd Wallet] could not define window.${key}:`, e);
+    return false;
+  }
+}
+
 // Channel names are inlined (kept in sync with src/protocol.ts) so this injected
 // module stays self-contained with no shared Rollup chunk.
 const SOLANA_REQUEST_CHANNEL = "helmsman-solana";
@@ -171,8 +202,6 @@ class SolanaProvider {
 }
 
 const solana = new SolanaProvider();
-Object.defineProperty(window, "solana", { value: solana, writable: false, configurable: true });
-window.dispatchEvent(new Event("solana#initialized"));
 
 // ---------------------------------------------------------------------------
 // window.clawd / window.helmsman — aliases for consent-gated Solana requests.
@@ -235,11 +264,6 @@ const clawd = {
   },
 };
 
-Object.defineProperty(window, "clawd", { value: clawd, writable: false, configurable: true });
-Object.defineProperty(window, "helmsman", { value: clawd, writable: false, configurable: true });
-window.dispatchEvent(new Event("clawd#initialized"));
-window.dispatchEvent(new Event("helmsman#initialized"));
-
 // HTTP 402 responses remain untouched. Payments need an explicit consent flow.
 
 // ---------------------------------------------------------------------------
@@ -248,4 +272,21 @@ window.dispatchEvent(new Event("helmsman#initialized"));
 // "wallet-standard:register-wallet" and listens for "wallet-standard:app-ready",
 // so dApps that load before or after the wallet both discover it.
 // ---------------------------------------------------------------------------
-registerWallet(new ClawdStandardWallet(solana));
+if (!alreadyInjected) {
+  // Wallet Standard first: it is the detection path dApps rely on and works
+  // even when window.solana belongs to another wallet.
+  try {
+    registerWallet(new ClawdStandardWallet(solana));
+  } catch (e) {
+    console.warn("[Clawd Wallet] Wallet Standard registration failed:", e);
+  }
+  try {
+    if (defineGlobal("solana", solana)) window.dispatchEvent(new Event("solana#initialized"));
+    const c = defineGlobal("clawd", clawd);
+    const h = defineGlobal("helmsman", clawd);
+    if (c) window.dispatchEvent(new Event("clawd#initialized"));
+    if (h) window.dispatchEvent(new Event("helmsman#initialized"));
+  } catch (e) {
+    console.warn("[Clawd Wallet] provider injection failed:", e);
+  }
+}

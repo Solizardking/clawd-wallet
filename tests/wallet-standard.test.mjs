@@ -65,11 +65,11 @@ test('registers "Clawd Wallet" via register-wallet event (wallet loads after app
   const w = wallets[0];
   assert.equal(w.name, 'Clawd Wallet');
   assert.equal(w.version, '1.0.0');
-  assert.match(w.icon, /^data:image\/png;base64,iVBOR/);
+  assert.match(w.icon, /^data:image\/webp;base64,UklGR/);
   assert.deepEqual([...w.chains], ['solana:mainnet', 'solana:devnet', 'solana:testnet']);
   assert.ok(!w.chains.some((c) => /clawd/i.test(c)), 'Clawd Chain must not be advertised');
   assert.deepEqual(Object.keys(w.features).sort(), [
-    'solana:signAndSendTransaction', 'solana:signIn', 'solana:signMessage', 'solana:signTransaction',
+    'clawd:capabilities', 'solana:signAndSendTransaction', 'solana:signIn', 'solana:signMessage', 'solana:signTransaction',
     'standard:connect', 'standard:disconnect', 'standard:events',
   ]);
   assert.deepEqual([...w.features['solana:signTransaction'].supportedTransactionVersions], ['legacy', 0]);

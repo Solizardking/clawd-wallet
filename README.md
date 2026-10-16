@@ -3,7 +3,7 @@
 <img src="docs/assets/banner.svg" alt="Clawd Wallet — Solana wallet for agents, consent on every signature" width="100%"/>
 
 <p>
-  <a href="https://github.com/Solizardking/clawd-wallet/pulls"><img alt="version" src="https://img.shields.io/badge/version-0.5.1-9945FF?style=for-the-badge&labelColor=0B0B14"/></a>
+  <a href="https://github.com/Solizardking/clawd-wallet/pulls"><img alt="version" src="https://img.shields.io/badge/version-0.5.2-9945FF?style=for-the-badge&labelColor=0B0B14"/></a>
   <img alt="Manifest V3" src="https://img.shields.io/badge/Chrome-Manifest%20V3-14F195?style=for-the-badge&logo=googlechrome&logoColor=14F195&labelColor=0B0B14"/>
   <img alt="Solana" src="https://img.shields.io/badge/Solana-window.solana-9945FF?style=for-the-badge&logo=solana&logoColor=white&labelColor=0B0B14"/>
   <img alt="Consent" src="https://img.shields.io/badge/consent-every%20connect%20%C2%B7%20sign%20%C2%B7%20send-14F195?style=for-the-badge&labelColor=0B0B14"/>
@@ -107,7 +107,7 @@ Web pages can't call the popup's own commands (`popup_*`). A forged request from
 5. Pin **Clawd Wallet** from the puzzle-piece menu.
 
 > [!NOTE]
-> v0.5.1 is not on the Chrome Web Store and has no GitHub release yet. The published v0.3.0 release came before the consent fix.
+> v0.5.2 is not on the Chrome Web Store and has no GitHub release yet. The published v0.3.0 release came before the consent fix.
 
 ### Clone and build
 

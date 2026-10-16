@@ -178,7 +178,7 @@ try {
 
   assert.ok(!rpcLog.includes('sendTransaction'), 'nothing may be broadcast');
   assert.ok(rpcLog.includes('simulateTransaction'));
-  const report = { checkedAt: new Date().toISOString(), version: '0.5.1', walletAdapterReact: '0.15.40', discoveredInWalletModal: true, connected: true, signMessageVerified: true, devnetTxSignedAndVerified: t.verified, previewShown: true, autoApproveSecondTxWithoutPopup: true, dangerousTxForcedManual: true, broadcast: false, rpc: 'mocked devnet', screenshots: ['wallet-adapter-modal.png', 'tx-preview.png', 'tx-preview-warnings.png'] };
+  const report = { checkedAt: new Date().toISOString(), version: '0.5.2', walletAdapterReact: '0.15.40', discoveredInWalletModal: true, connected: true, signMessageVerified: true, devnetTxSignedAndVerified: t.verified, previewShown: true, autoApproveSecondTxWithoutPopup: true, dangerousTxForcedManual: true, broadcast: false, rpc: 'mocked devnet', screenshots: ['wallet-adapter-modal.png', 'tx-preview.png', 'tx-preview-warnings.png'] };
   await writeFile(join(artifacts, 'browser-adapter.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } finally {

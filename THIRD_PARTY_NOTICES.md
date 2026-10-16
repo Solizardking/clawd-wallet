@@ -16,7 +16,9 @@ Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 
 The transaction preview, auto-approve and SIWS code (`src/tx/`) is original Clawd code.
 No source code from the Backpack wallet (Coral, GPL-3.0) is included.
-`src/wallet-standard.ts` is an original implementation written against the
+`src/wallet-standard.ts` is an original implementation (0.5.2: account object and
+injection pattern aligned with the Apache-2.0 reference wallet in
+`wallet-standard/packages/wallets/ghost`, no code copied verbatim) written against the
 public Wallet Standard interfaces above; Backpack's Apache-2.0
 `packages/wallet-standard` was not copied. Should any Backpack Apache-2.0 code be
 ported in future, its license header and a Coral attribution must be added here.

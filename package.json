@@ -1,6 +1,6 @@
 {
   "name": "@helmsman/extension",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,9 +11,9 @@
     "test:keyring": "tsx src/wallet/keyring.vectors.ts",
     "test:clawd": "tsx src/clawd/clawd.vectors.ts",
     "store": "node ./scripts/pack.mjs --build",
-    "test:security": "npm run build && node --test tests/security.test.mjs tests/wallet-standard.test.mjs",
+    "test:security": "npm run build && node --test tests/security.test.mjs tests/wallet-standard.test.mjs tests/wallet-standard-compliance.test.mjs",
     "test": "npm run test:security && npm run test:unit && npm run test:keyring && npm run test:clawd",
-    "test:browser": "npm run build && vite build -c tests/adapter-app/vite.config.mjs && node tests/browser-consent.mjs && node tests/browser-adapter.mjs",
+    "test:browser": "npm run build && vite build -c tests/adapter-app/vite.config.mjs && node tests/browser-consent.mjs && node tests/browser-adapter.mjs && node tests/browser-conflict.mjs",
     "box:launch": "node ./scripts/launch-chromium.mjs",
     "box:verify": "npm run build && node ./scripts/launch-chromium.mjs --verify",
     "test:unit": "node --import tsx --test tests/preview.test.ts"

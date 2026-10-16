@@ -122,7 +122,7 @@ try {
   assert.equal(discovered.name, 'Clawd Wallet');
   assert.deepEqual(discovered.chains, ['solana:mainnet', 'solana:devnet', 'solana:testnet']);
   assert.equal(discovered.accountsBeforeConnect, 0);
-  assert.equal(discovered.icon, 'data:image/png;base64,');
+  assert.equal(discovered.icon, 'data:image/webp;base64');
   // This origin was approved above, so a silent standard:connect succeeds without a popup.
   const stdAccounts = await page.evaluate(async () => (await globalThis.clawdStandard.features['standard:connect'].connect({ silent: true })).accounts.map(a => a.address));
   assert.deepEqual(stdAccounts, [account]);
