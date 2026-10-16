@@ -12,6 +12,8 @@ export type PersistedConfig = {
   helmsmanApiUrl?: string;
   /** User Solana JSON-RPC (e.g. Helius). Prefer chrome.storage; may seed from config.json. */
   customRpcUrl?: string;
+  /** Lock after this many minutes without popup activity (default 30). Ends auto-approve sessions. */
+  autoLockMinutes?: number;
 };
 
 const VAULT_KEY = "helmsman:vault";

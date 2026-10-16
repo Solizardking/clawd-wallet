@@ -53,7 +53,6 @@ export function chainForCluster(cluster: string | undefined): SupportedChain | n
 /** Minimal surface of the in-page legacy provider that this adapter needs. */
 export interface ClawdBridge {
   request(args: { method: string; params?: unknown }): Promise<unknown>;
-  signMessage(message: Uint8Array): Promise<{ publicKey: string; signature: string }>;
   on(event: string, cb: (data: unknown) => void): void;
 }
 
@@ -103,24 +102,6 @@ function makeAccount(address: string): WalletAccount {
   }) as WalletAccount;
 }
 
-export function buildSignInMessage(input: SolanaSignInInput & { domain: string; address: string }): string {
-  // Sign-In With Solana text (CAIP-122 / EIP-4361 shape).
-  let m = `${input.domain} wants you to sign in with your Solana account:\n${input.address}`;
-  if (input.statement) m += `\n\n${input.statement}`;
-  const f: string[] = [];
-  if (input.uri) f.push(`URI: ${input.uri}`);
-  if (input.version) f.push(`Version: ${input.version}`);
-  if (input.chainId) f.push(`Chain ID: ${input.chainId}`);
-  if (input.nonce) f.push(`Nonce: ${input.nonce}`);
-  if (input.issuedAt) f.push(`Issued At: ${input.issuedAt}`);
-  if (input.expirationTime) f.push(`Expiration Time: ${input.expirationTime}`);
-  if (input.notBefore) f.push(`Not Before: ${input.notBefore}`);
-  if (input.requestId) f.push(`Request ID: ${input.requestId}`);
-  if (input.resources?.length) f.push(`Resources:${input.resources.map((r) => `\n- ${r}`).join("")}`);
-  if (f.length) m += `\n\n${f.join("\n")}`;
-  return m;
-}
-
 export class ClawdStandardWallet implements Wallet {
   readonly version = "1.0.0" as const;
   readonly name = "Clawd Wallet";
@@ -129,11 +110,9 @@ export class ClawdStandardWallet implements Wallet {
   #accounts: WalletAccount[] = [];
   #listeners: { [E in StandardEventsNames]?: StandardEventsListeners[E][] } = {};
   #bridge: ClawdBridge;
-  #host: () => string;
 
-  constructor(bridge: ClawdBridge, host: () => string = () => globalThis.location?.host ?? "") {
+  constructor(bridge: ClawdBridge) {
     this.#bridge = bridge;
-    this.#host = host;
     bridge.on("accountsChanged", (data) => {
       // Only set accounts we already exposed (after an approved connect). The
       // background only sends this event to authorized origins anyway.
@@ -205,17 +184,18 @@ export class ClawdStandardWallet implements Wallet {
   }
 
   #signTransaction: SolanaSignTransactionMethod = async (...inputs) => {
-    const out: SolanaSignTransactionOutput[] = [];
     for (const input of inputs) {
       this.#requireAccount(input.account);
       this.#requireChain(input.chain);
-      const r = (await this.#bridge.request({
-        method: "wallet_signTransactionB64",
-        params: { transaction: toBase64(copyBytes(input.transaction)) },
-      })) as { signedTransaction: string };
-      out.push({ signedTransaction: fromBase64(r.signedTransaction) });
     }
-    return out;
+    const encoded = inputs.map((i) => toBase64(copyBytes(i.transaction)));
+    if (encoded.length === 1) {
+      const r = (await this.#bridge.request({ method: "wallet_signTransactionB64", params: { transaction: encoded[0] } })) as { signedTransaction: string };
+      return [{ signedTransaction: fromBase64(r.signedTransaction) }];
+    }
+    // Several inputs = one batched approval (signAllTransactions).
+    const r = (await this.#bridge.request({ method: "wallet_signAllTransactionsB64", params: { transactions: encoded } })) as { signedTransactions: string[] };
+    return r.signedTransactions.map((t): SolanaSignTransactionOutput => ({ signedTransaction: fromBase64(t) }));
   };
 
   #signAndSend: SolanaSignAndSendTransactionMethod = async (...inputs) => {
@@ -230,9 +210,17 @@ export class ClawdStandardWallet implements Wallet {
       if (active !== input.chain) {
         throw new Error(`Wallet network is ${active ?? net?.cluster ?? "unknown"}, transaction is for ${input.chain}. Switch network in Clawd Wallet.`);
       }
+      const o = input.options ?? {};
+      const options = {
+        skipPreflight: o.skipPreflight,
+        preflightCommitment: o.preflightCommitment,
+        maxRetries: o.maxRetries,
+        minContextSlot: o.minContextSlot,
+        commitment: o.commitment,
+      };
       const r = (await this.#bridge.request({
         method: "wallet_signAndSendTransaction",
-        params: { transaction: toBase64(copyBytes(input.transaction)) },
+        params: { transaction: toBase64(copyBytes(input.transaction)), options },
       })) as { signature: string };
       out.push({ signature: base58Decode(r.signature) });
     }
@@ -244,7 +232,11 @@ export class ClawdStandardWallet implements Wallet {
     for (const input of inputs) {
       this.#requireAccount(input.account);
       const message = copyBytes(input.message);
-      const r = await this.#bridge.signMessage(message);
+      // Arbitrary bytes; the wallet shows UTF-8 when valid, else hex.
+      const r = (await this.#bridge.request({
+        method: "wallet_signMessage",
+        params: { messageB64: toBase64(message), signer: input.account.address },
+      })) as { signature: string };
       out.push({ signedMessage: message, signature: base58Decode(r.signature), signatureType: "ed25519" });
     }
     return out;
@@ -253,13 +245,17 @@ export class ClawdStandardWallet implements Wallet {
   #signIn: SolanaSignInMethod = async (...inputs) => {
     const out: SolanaSignInOutput[] = [];
     for (const input of inputs) {
-      if (!this.#accounts.length) await this.#connect();
-      const account = (input.address && this.#accounts.find((a) => a.address === input.address)) || this.#accounts[0];
-      if (!account) throw new Error("No account");
-      const text = buildSignInMessage({ ...input, domain: input.domain || this.#host(), address: account.address });
-      const signedMessage = new TextEncoder().encode(text);
-      const r = await this.#bridge.signMessage(signedMessage);
-      out.push({ account, signedMessage, signature: base58Decode(r.signature), signatureType: "ed25519" });
+      // The wallet builds the SIWS text and rejects a domain that does not
+      // match the requesting page.
+      const r = (await this.#bridge.request({ method: "wallet_signIn", params: { input: { ...input } } })) as {
+        address: string; signedMessageB64: string; signature: string;
+      };
+      if (!this.#accounts.some((a) => a.address === r.address)) {
+        const resp = (await this.#bridge.request({ method: "wallet_requestAccounts", params: { promptAuthorization: false } })) as { accounts?: string[] };
+        this.#setAccounts(resp.accounts ?? [r.address]);
+      }
+      const account = this.#accounts.find((a) => a.address === r.address) ?? makeAccount(r.address);
+      out.push({ account, signedMessage: fromBase64(r.signedMessageB64), signature: base58Decode(r.signature), signatureType: "ed25519" });
     }
     return out;
   };

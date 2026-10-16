@@ -20,12 +20,12 @@ const popupSender = { id: extensionId, url: `${extensionOrigin}/popup.html?view=
 const sources = Object.fromEntries(await Promise.all(['background', 'content', 'injected'].map(async name => [name, await readFile(new URL(`../dist/${name}.js`, import.meta.url), 'utf8')])));
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function background({ authorized = true, locked = false, popupFails = false, tabs = [], ai } = {}) {
+function background({ authorized = true, locked = false, popupFails = false, tabs = [], ai, rpc, sessionExtra = {} } = {}) {
   const local = {
     'helmsman:vault': { fixture: true },
     'helmsman:config': { accountCount: 1, selectedAccount: account, authorizedOrigins: authorized ? [webSender.origin] : [], agentMode: true, customRpcUrl: 'https://rpc.example', helmsmanApiUrl: 'https://backend.example' },
   };
-  const session = locked ? {} : { 'helmsman:unlocked': { mnemonic: 'public fixture', seedHex } };
+  const session = locked ? { ...sessionExtra } : { 'helmsman:unlocked': { mnemonic: 'public fixture', seedHex }, ...sessionExtra };
   const storage = entries => ({
     async get(key) { return { [key]: entries[key] }; },
     async set(value) { Object.assign(entries, value); },
@@ -33,6 +33,7 @@ function background({ authorized = true, locked = false, popupFails = false, tab
   });
   let listener;
   const network = [], captures = [], popups = [], tabMessages = [], bodies = [];
+  let VmError = Error;
   const chrome = {
     runtime: { id: extensionId, getURL: path => `${extensionOrigin}/${path}`, onMessage: { addListener(fn) { listener = fn; } } },
     storage: { local: storage(local), session: storage(session) },
@@ -47,13 +48,27 @@ function background({ authorized = true, locked = false, popupFails = false, tab
       if (String(url) === `${extensionOrigin}/config.json`) return Response.json({ apiUrl: 'https://backend.example' });
       network.push(String(url)); bodies.push(init?.body);
       if (ai && String(url).includes('/api/wallet-chat')) return Response.json({ choices: [{ message: { content: ai } }], model: 'fixture' });
-      throw new Error('External requests are forbidden in security tests');
+      if (rpc && init?.body && !String(url).includes('/api/')) {
+        const req = JSON.parse(init.body);
+        const one = r => ({ jsonrpc: '2.0', id: r.id, result: rpc(r.method, r.params) });
+        return Response.json(Array.isArray(req) ? req.map(one) : one(req));
+      }
+      // Throw a same-realm Error (web3.js checks `instanceof Error`).
+      throw new VmError('External requests are forbidden in security tests');
     },
   });
+  VmError = vm.runInContext('Error', context);
   vm.runInContext(sources.background, context, { filename: 'dist/background.js' });
   const send = (msg, sender = webSender) => new Promise(resolve => listener(msg, sender, result => resolve(plain(result))));
   const popup = (method, params) => send({ type: 'popup:request', method, params }, popupSender);
-  return { send, popup, local, network, captures, popups, tabMessages, bodies };
+  return { send, popup, local, session, network, captures, popups, tabMessages, bodies };
+}
+
+// Transaction previews may read/simulate on the user's own RPC (after connect),
+// but nothing may be broadcast and no other host contacted.
+function onlyPreviewRpc(h) {
+  for (const u of h.network) assert.match(u, /^https:\/\/(rpc\.example|api\.mainnet-beta\.solana\.com)\/?$/);
+  for (const b of h.bodies) assert.doesNotMatch(String(b ?? ''), /sendTransaction/);
 }
 
 async function pending(harness) {
@@ -200,13 +215,13 @@ for (const [method, params, type] of requests) {
     if (params.transaction) assert.equal(action.transaction, params.transaction);
     if (params.message) assert.equal(action.message, params.message);
     if (params.to) { assert.equal(action.to, params.to); assert.equal(action.amountSol, params.sol); }
-    assert.equal(h.network.length, 0);
+    onlyPreviewRpc(h);
     const spoofed = await h.send({ type: 'popup:request', method: 'popup_approveAction', params: { id: action.id } });
     assert.equal(spoofed.error.code, 4100); assert.equal(settled, false);
     await h.popup('popup_declineAction', { id: action.id });
     assert.equal((await response).error.code, 4001);
     assert.equal((await h.popup('popup_listActions')).result.pendingActions.length, 0);
-    assert.equal(h.network.length, 0); assert.equal(h.captures.length, 0);
+    onlyPreviewRpc(h); assert.equal(h.captures.length, 0);
   });
 }
 
@@ -230,7 +245,7 @@ test('approved base64 Solana transaction signs without broadcasting', async () =
   const result = await response;
   assert.equal(result.error, undefined);
   const signed = Transaction.from(Buffer.from(result.result.signedTransaction, 'base64'));
-  assert.equal(signed.verifySignatures(), true); assert.equal(h.network.length, 0);
+  assert.equal(signed.verifySignatures(), true); onlyPreviewRpc(h);
 });
 
 test('revoking a site while approval is pending prevents signing', async () => {
@@ -333,4 +348,182 @@ test('AI assistant refuses locally to send a recovery phrase, seed or secret key
     assert.match(r.error.message, /recovery phrase or private key/);
   }
   assert.equal(h.network.length, 0);
+});
+
+// ---- 0.5.0: previews, auto-approve, bytes signing, SIWS, batching, send options ----
+const SYS = '11111111111111111111111111111111';
+// Fake RPC: the fixture account has 1 SOL; simulation debits `debit` lamports.
+function fakeRpc({ debit = 6000, simErr = null, sent = [] } = {}) {
+  const acct = (lamports) => ({ data: ['', 'base64'], executable: false, lamports, owner: SYS, rentEpoch: 0, space: 0 });
+  return (method, params) => {
+    switch (method) {
+      case 'getMultipleAccounts': return { context: { slot: 1 }, value: params[0].map(a => a === account ? acct(1e9) : null) };
+      case 'simulateTransaction': return { context: { slot: 1 }, value: { err: simErr, logs: ['Program 11111111111111111111111111111111 success'], unitsConsumed: 150, returnData: null, accounts: params[1].accounts.addresses.map(a => a === account ? acct(1e9 - debit) : null) } };
+      case 'getFeeForMessage': return { context: { slot: 1 }, value: 5000 };
+      case 'sendTransaction': sent.push(params); return '5'.repeat(88);
+      case 'getSignatureStatuses': return { context: { slot: 1 }, value: [{ slot: 1, confirmations: 1, err: null, confirmationStatus: 'confirmed' }] };
+      default: throw new Error('unexpected rpc ' + method);
+    }
+  };
+}
+const txB64 = (lamports = 1) => new Transaction({ recentBlockhash: SYS, feePayer: new PublicKey(account) })
+  .add(SystemProgram.transfer({ fromPubkey: new PublicKey(account), toPubkey: new PublicKey(destination), lamports }))
+  .serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+const autoLimits = { durationMs: 3600_000, maxTotalSol: 0.001, maxPerTxSol: 0.0001, allowedPrograms: [SYS] };
+
+async function previewed(h) {
+  for (let i = 0; i < 600; i++) {
+    const a = (await h.popup('popup_listActions')).result.pendingActions[0];
+    if (a?.previews) return a;
+    await new Promise(r => setTimeout(r, 10));
+  }
+  assert.fail('preview never arrived');
+}
+
+test('transaction approvals carry a simulated preview (fee, programs, SOL change)', async () => {
+  const h = background({ rpc: fakeRpc() });
+  const response = h.send({ type: 'solana:request', method: 'wallet_signTransactionB64', params: { transaction: txB64() } });
+  const action = await previewed(h);
+  const p = action.previews[0];
+  assert.equal(p.simulation.ok, true);
+  assert.equal(p.programs[0].name, 'System Program');
+  assert.equal(p.feeLamports, 5000);
+  assert.equal(p.balanceChanges[0].uiDelta, '-0.000006');
+  assert.deepEqual(p.blocking, []);
+  await h.popup('popup_declineAction', { id: action.id });
+  assert.equal((await response).error.code, 4001);
+});
+
+test('simulation failure still shows raw details and can be approved manually', async () => {
+  const h = background();
+  const response = h.send({ type: 'solana:request', method: 'wallet_signTransactionB64', params: { transaction: txB64() } });
+  const action = await previewed(h);
+  assert.equal(action.previews[0].simulation.ok, false);
+  assert.ok(action.previews[0].blocking.includes('could_not_simulate'));
+  assert.equal(action.previews[0].instructions.length, 1);
+  await h.popup('popup_approveAction', { id: action.id });
+  assert.ok((await response).result.signedTransaction);
+});
+
+test('auto-approve is off by default and only for connected sites', async () => {
+  const h = background({ authorized: false, rpc: fakeRpc() });
+  assert.deepEqual((await h.popup('popup_getState')).result.autoApprove, []);
+  assert.match((await h.popup('popup_setAutoApprove', { origin: webSender.origin, ...autoLimits })).error.message, /connected sites/);
+});
+
+test('auto-approve signs within limits without a popup, logs activity, and falls back when over limits', async () => {
+  const h = background({ rpc: fakeRpc() });
+  assert.equal((await h.popup('popup_setAutoApprove', { origin: webSender.origin, ...autoLimits })).error, undefined);
+  const r = await h.send({ type: 'solana:request', method: 'wallet_signTransactionB64', params: { transaction: txB64() } });
+  const signed = Transaction.from(Buffer.from(r.result.signedTransaction, 'base64'));
+  assert.equal(signed.verifySignatures(), true);
+  assert.equal(h.popups.length, 0, 'no approval window for an auto-approved tx');
+  const state = (await h.popup('popup_getState')).result;
+  assert.equal(state.activity[0].auto, true); assert.equal(state.activity[0].result, 'approved');
+  assert.equal(state.autoApprove[0].count, 1); assert.equal(state.autoApprove[0].spentLamports, 6000);
+  // Over the per-tx limit: manual approval with a note.
+  const h2 = background({ rpc: fakeRpc({ debit: 500_000 }) });
+  await h2.popup('popup_setAutoApprove', { origin: webSender.origin, ...autoLimits });
+  const response = h2.send({ type: 'solana:request', method: 'wallet_signTransactionB64', params: { transaction: txB64() } });
+  const action = await previewed(h2);
+  assert.match(action.autoApproveNote, /per-transaction/);
+  await h2.popup('popup_declineAction', { id: action.id }); await response;
+});
+
+test('auto-approve never covers simulation errors, other programs, messages or SOL transfers', async () => {
+  const h = background({ rpc: fakeRpc({ simErr: 'InsufficientFundsForFee' }) });
+  await h.popup('popup_setAutoApprove', { origin: webSender.origin, ...autoLimits });
+  const response = h.send({ type: 'solana:request', method: 'wallet_signTransactionB64', params: { transaction: txB64() } });
+  const action = await previewed(h);
+  assert.match(action.autoApproveNote, /simulation/);
+  await h.popup('popup_declineAction', { id: action.id }); await response;
+  const msg = h.send({ type: 'solana:request', method: 'wallet_signMessage', params: { message: 'hi' } });
+  assert.equal((await pending(h)).type, 'sign_message');
+  await h.popup('popup_declineAction', { id: (await pending(h)).id }); await msg;
+});
+
+test('auto-approve can be enabled from the approval screen and is ended by lock, revoke and disconnect', async () => {
+  const h = background({ rpc: fakeRpc() });
+  const response = h.send({ type: 'solana:request', method: 'wallet_signTransactionB64', params: { transaction: txB64() } });
+  const action = await previewed(h);
+  assert.equal((await h.popup('popup_approveAction', { id: action.id, autoApprove: autoLimits })).error, undefined);
+  assert.ok((await response).result.signedTransaction);
+  let st = (await h.popup('popup_getState')).result;
+  assert.equal(st.autoApprove.length, 1); assert.equal(st.autoApprove[0].spentLamports, 6000);
+  await h.popup('popup_lockWallet');
+  st = (await h.popup('popup_getState')).result;
+  assert.deepEqual(st.autoApprove, []); assert.equal(st.walletState, 'locked');
+  const h2 = background({ rpc: fakeRpc() });
+  await h2.popup('popup_setAutoApprove', { origin: webSender.origin, ...autoLimits });
+  await h2.popup('popup_revokeAutoApprove', { origin: webSender.origin });
+  assert.deepEqual((await h2.popup('popup_getState')).result.autoApprove, []);
+  await h2.popup('popup_setAutoApprove', { origin: webSender.origin, ...autoLimits });
+  await h2.send({ type: 'solana:request', method: 'wallet_disconnect' });
+  assert.deepEqual((await h2.popup('popup_getState')).result.autoApprove, []);
+});
+
+test('auto-lock after inactivity locks the wallet and ends sessions', async () => {
+  const h = background({ sessionExtra: { 'clawd:lastActive': Date.now() - 31 * 60_000, 'clawd:autoApprove': { [webSender.origin]: { origin: webSender.origin, expiresAt: Date.now() + 1e6, allowedPrograms: [SYS], maxTotalLamports: 1e9, maxPerTxLamports: 1e9, spentLamports: 0, count: 0, createdAt: 0 } } } });
+  const r = await h.send({ type: 'solana:request', method: 'wallet_signMessage', params: { message: 'x' } });
+  assert.equal(r.error.code, 4100);
+  assert.equal(h.session['helmsman:unlocked'], undefined);
+  assert.equal(h.session['clawd:autoApprove'], undefined);
+});
+
+test('signMessage signs arbitrary bytes and shows hex for binary', async () => {
+  const h = background();
+  const bytes = new Uint8Array([0xff, 0x00, 0x01, 0x80]);
+  const response = h.send({ type: 'solana:request', method: 'wallet_signMessage', params: { messageB64: Buffer.from(bytes).toString('base64') } });
+  const action = await pending(h);
+  assert.equal(action.message, '0xff000180'); assert.equal(action.messageIsUtf8, false);
+  await h.popup('popup_approveAction', { id: action.id });
+  const { signature } = (await response).result;
+  assert.equal(nacl.sign.detached.verify(bytes, bs58.decode(signature), bs58.decode(account)), true);
+  // A message that is really a transaction is flagged.
+  const txMsg = Transaction.from(Buffer.from(txB64(), 'base64')).serializeMessage();
+  const r2 = h.send({ type: 'solana:request', method: 'wallet_signMessage', params: { messageB64: txMsg.toString('base64') } });
+  const a2 = await pending(h);
+  assert.equal(a2.messageLooksLikeTransaction, true);
+  await h.popup('popup_declineAction', { id: a2.id }); await r2;
+});
+
+test('signIn rejects a mismatched domain and signs the full SIWS text for the right one', async () => {
+  const h = background();
+  assert.match((await h.send({ type: 'solana:request', method: 'wallet_signIn', params: { input: { domain: 'evil.example', nonce: 'abcdefgh' } } })).error.message, /domain mismatch/);
+  assert.equal(h.popups.length, 0);
+  const response = h.send({ type: 'solana:request', method: 'wallet_signIn', params: { input: { domain: 'dapp.example', statement: 'Welcome', nonce: 'abcdefgh', uri: 'https://dapp.example/login', version: '1', chainId: 'solana:mainnet' } } });
+  const action = await pending(h);
+  assert.equal(action.type, 'sign_in');
+  assert.match(action.signIn.text, /^dapp\.example wants you to sign in with your Solana account:\nFrJPDJ/);
+  assert.match(action.signIn.text, /Nonce: abcdefgh/);
+  await h.popup('popup_approveAction', { id: action.id });
+  const out = (await response).result;
+  const text = Buffer.from(out.signedMessageB64, 'base64');
+  assert.equal(text.toString(), action.signIn.text);
+  assert.equal(nacl.sign.detached.verify(text, bs58.decode(out.signature), bs58.decode(account)), true);
+});
+
+test('signAllTransactions: one batched approval with a preview per transaction', async () => {
+  const h = background({ rpc: fakeRpc() });
+  const response = h.send({ type: 'solana:request', method: 'wallet_signAllTransactionsB64', params: { transactions: [txB64(1), txB64(2)] } });
+  const action = await previewed(h);
+  assert.equal(action.type, 'sign_all'); assert.equal(action.previews.length, 2);
+  await h.popup('popup_approveAction', { id: action.id });
+  const signed = (await response).result.signedTransactions.map(t => Transaction.from(Buffer.from(t, 'base64')));
+  assert.equal(signed.length, 2); assert.ok(signed.every(t => t.verifySignatures()));
+  assert.equal((await h.send({ type: 'solana:request', method: 'wallet_signAllTransactionsB64', params: { transactions: [] } })).error.code, -32602);
+});
+
+test('signAndSendTransaction honors send options (skipPreflight, preflightCommitment, maxRetries, minContextSlot, commitment)', async () => {
+  const sent = [];
+  const h = background({ rpc: fakeRpc({ sent }) });
+  const options = { skipPreflight: true, preflightCommitment: 'processed', maxRetries: 2, minContextSlot: 9, commitment: 'confirmed', evil: 'x' };
+  const response = h.send({ type: 'solana:request', method: 'wallet_signAndSendTransaction', params: { transaction: txB64(), options } });
+  const action = await previewed(h);
+  assert.deepEqual(action.sendOptions, { skipPreflight: true, preflightCommitment: 'processed', commitment: 'confirmed', maxRetries: 2, minContextSlot: 9 });
+  await h.popup('popup_approveAction', { id: action.id });
+  assert.equal((await response).result.signature, '5'.repeat(88));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][1].skipPreflight, true); assert.equal(sent[0][1].preflightCommitment, 'processed');
+  assert.equal(sent[0][1].maxRetries, 2); assert.equal(sent[0][1].minContextSlot, 9);
 });

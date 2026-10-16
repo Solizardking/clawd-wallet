@@ -118,6 +118,27 @@
         margin: 10px 0;
         font-size: 12px;
       }
+      /* 0.5.0 transaction preview */
+      body.wide { width: 400px; }
+      .warn { border-radius: 8px; padding: 7px 9px; margin: 6px 0; font-size: 12px; }
+      .warn.w-danger { background: #3a1620; border: 1px solid #b0314f; color: #ffd7e0; }
+      .warn.w-warn { background: #33280f; border: 1px solid #9a7a20; color: #ffeab0; }
+      .warn.w-info { background: #10202e; border: 1px solid #2a5a80; color: #cfe8ff; }
+      .delta { display: flex; justify-content: space-between; padding: 3px 0; font-family: ui-monospace, monospace; }
+      .delta .neg { color: #ff7a93; } .delta .pos { color: var(--accent); }
+      .kv { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; gap: 8px; }
+      .kv span:last-child { text-align: right; word-break: break-all; }
+      .prog { font-size: 12px; padding: 2px 0; }
+      .prog .unknown { color: #ffb44d; }
+      details { margin: 6px 0; font-size: 11px; }
+      details summary { cursor: pointer; color: var(--muted); }
+      details pre { white-space: pre-wrap; word-break: break-all; font-size: 10px; background: #0a0a0a; padding: 6px; border-radius: 6px; max-height: 160px; overflow: auto; }
+      .pill { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); margin-left: 4px; color: var(--muted); }
+      .pill.auto { border-color: var(--accent); color: var(--accent); }
+      .autoform label { display: block; font-size: 12px; margin-top: 6px; }
+      input[type=checkbox] { width: auto; margin: 0 8px 0 0; flex: none; }
+      label.row { justify-content: flex-start; font-size: 12px; }
+      .activity { font-size: 11px; border-bottom: 1px solid var(--line); padding: 4px 0; }
     </style>
   </head>
   <body>

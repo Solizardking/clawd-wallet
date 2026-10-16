@@ -1,3 +1,7 @@
+import type { TxPreview } from "./tx/preview.js";
+import type { ActivityEntry, AutoApproveSession } from "./tx/auto-approve.js";
+export type { TxPreview, ActivityEntry, AutoApproveSession };
+
 // Shared protocol constants and types for the Helmsman Solana wallet extension.
 // Message flow:
 //   dapp page  <-window.postMessage->  content script  <-chrome.runtime->  background (service worker)
@@ -26,7 +30,10 @@ export type WalletMethod =
   | "wallet_sendSol"
   | "wallet_getBalance"
   // Wallet Standard standard:disconnect: revokes this origin's permission.
-  | "wallet_disconnect";
+  | "wallet_disconnect"
+  // 0.5.0: batched base64 signing and Sign-In With Solana.
+  | "wallet_signAllTransactionsB64"
+  | "wallet_signIn";
 
 export type WalletState = "locked" | "unlocked" | "uninitialized";
 
@@ -100,7 +107,11 @@ export type PopupMethod =
   | "popup_clawdFaucet"
   | "popup_clawdSign"
   // AI assistant (via musebook-proxy worker)
-  | "popup_aiChat";
+  | "popup_aiChat"
+  // Per-origin auto-approve sessions + activity
+  | "popup_setAutoApprove"
+  | "popup_revokeAutoApprove"
+  | "popup_setAutoLock";
 
 export type PopupRequest = {
   type: "popup:request";
@@ -115,6 +126,8 @@ export type PendingActionType =
   | "sign_message"
   | "sign_and_send"
   | "sign_b64"
+  | "sign_all"
+  | "sign_in"
   | "send_sol";
 
 export type PendingActionView = {
@@ -130,6 +143,28 @@ export type PendingActionView = {
   // send_sol
   to?: string;
   amountSol?: number;
+  // sign_message: raw bytes (base64); `message` is the UTF-8 text or 0x-hex view.
+  messageB64?: string;
+  messageIsUtf8?: boolean;
+  messageLooksLikeTransaction?: boolean;
+  // sign_all
+  transactions?: string[];
+  // sign_and_send options (Wallet Standard / web3 SendOptions)
+  sendOptions?: SendOptionsView;
+  // sign_in: exact SIWS text that will be signed, plus domain/uri checks
+  signIn?: { text: string; address: string; warnings: string[] };
+  /** Transaction previews (one per transaction). null while simulating. */
+  previews?: TxPreview[] | null;
+  /** Why an active auto-approve session did not cover this request. */
+  autoApproveNote?: string;
+};
+
+export type SendOptionsView = {
+  skipPreflight?: boolean;
+  preflightCommitment?: "processed" | "confirmed" | "finalized";
+  maxRetries?: number;
+  minContextSlot?: number;
+  commitment?: "processed" | "confirmed" | "finalized";
 };
 
 export type PopupState = {
@@ -143,4 +178,7 @@ export type PopupState = {
   agentMode: boolean;
   helmsmanApiUrl: string;
   customRpcUrl: string;
+  autoApprove: AutoApproveSession[];
+  activity: ActivityEntry[];
+  autoLockMinutes: number;
 };

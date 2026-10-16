@@ -1,6 +1,6 @@
 {
   "name": "@helmsman/extension",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,10 +12,11 @@
     "test:clawd": "tsx src/clawd/clawd.vectors.ts",
     "store": "node ./scripts/pack.mjs --build",
     "test:security": "npm run build && node --test tests/security.test.mjs tests/wallet-standard.test.mjs",
-    "test": "npm run test:security && npm run test:keyring && npm run test:clawd",
-    "test:browser": "npm run build && node tests/browser-consent.mjs",
+    "test": "npm run test:security && npm run test:unit && npm run test:keyring && npm run test:clawd",
+    "test:browser": "npm run build && vite build -c tests/adapter-app/vite.config.mjs && node tests/browser-consent.mjs && node tests/browser-adapter.mjs",
     "box:launch": "node ./scripts/launch-chromium.mjs",
-    "box:verify": "npm run build && node ./scripts/launch-chromium.mjs --verify"
+    "box:verify": "npm run build && node ./scripts/launch-chromium.mjs --verify",
+    "test:unit": "node --import tsx --test tests/preview.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
@@ -30,9 +31,14 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@solana/wallet-adapter-base": "^0.9.28",
+    "@solana/wallet-adapter-react": "^0.15.40",
+    "@solana/wallet-adapter-react-ui": "^0.9.40",
     "@types/chrome": "^0.1.11",
     "@wallet-standard/app": "^1.1.1",
     "playwright": "1.64.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vite": "^7.1.5"

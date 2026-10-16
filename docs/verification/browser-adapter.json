@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-10-16T17:38:51.144Z",
+  "version": "0.5.0",
+  "walletAdapterReact": "0.15.40",
+  "discoveredInWalletModal": true,
+  "connected": true,
+  "signMessageVerified": true,
+  "devnetTxSignedAndVerified": true,
+  "previewShown": true,
+  "autoApproveSecondTxWithoutPopup": true,
+  "dangerousTxForcedManual": true,
+  "broadcast": false,
+  "rpc": "mocked devnet",
+  "screenshots": [
+    "wallet-adapter-modal.png",
+    "tx-preview.png",
+    "tx-preview-warnings.png"
+  ]
+}

@@ -44,6 +44,11 @@ import {
 } from "./wallet/store.js";
 
 import { askAssistant, type ChatMessage } from "./ai/assistant.js";
+import { previewTransaction, undecodablePreview, type PreviewRpc, type TxPreview } from "./tx/preview.js";
+import { checkAutoApprove, createSession, type ActivityEntry, type AutoApproveRequest, type AutoApproveSession } from "./tx/auto-approve.js";
+import { buildSignInMessage, checkSignIn, type SignInInput } from "./tx/siws.js";
+import { VersionedMessage } from "@solana/web3.js";
+import type { SendOptionsView } from "./protocol.js";
 import { buildSignedTransfer, clawdOverview, requestFaucet } from "./clawd/chain.js";
 
 // globalThis.Buffer is required by @solana/web3.js and bip39 in a bundled SW.
@@ -192,8 +197,8 @@ async function openPopupWindow(): Promise<void> {
   const win = await chrome.windows.create({
     url: chrome.runtime.getURL("popup.html?view=notification"),
     type: "popup",
-    width: 360,
-    height: 600,
+    width: 420,
+    height: 720,
   });
   notificationWindowId = win?.id ?? null;
 }
@@ -206,41 +211,201 @@ function releaseDrainedPopup(): void {
 }
 
 function pendingViews(): PendingActionView[] {
-  return [...pendingActions.values()].map(({ id, type, origin, tabId, message, signers, transaction, to, amountSol }) => ({
-    id,
-    type,
-    origin,
-    tabId,
-    message,
-    signers,
-    transaction,
-    to,
-    amountSol,
-  }));
+  return [...pendingActions.values()].map(({ resolve: _r, reject: _j, ...view }) => view);
 }
 
 function enqueueAction(
   type: PendingActionType,
   origin: string,
-  extra: {
-    tabId?: number;
-    message?: string;
-    signers?: string[];
-    transaction?: string;
-    to?: string;
-    amountSol?: number;
-  },
+  extra: Partial<Omit<PendingActionView, "id" | "type" | "origin">>,
+  onCreated?: (id: string) => void,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const id = newId();
     pendingActions.set(id, { id, type, origin, ...extra, resolve, reject });
+    onCreated?.(id);
     // Every new connection and signing/transfer request needs popup consent,
-    // including wallets that previously persisted agentMode=true.
+    // unless an explicit, limited per-origin auto-approve session covers it.
     void openPopupWindow().catch(() => {
       pendingActions.delete(id);
       reject({ code: 4001, message: "Could not open the approval window" });
     });
   });
+}
+
+/** Ask an open popup to re-render (preview ready, auto-approve activity). */
+function notifyPopup(): void {
+  try {
+    const r = (chrome.runtime as { sendMessage?: (m: unknown) => Promise<unknown> | void }).sendMessage?.({ type: "clawd:refresh" });
+    if (r && typeof (r as Promise<unknown>).catch === "function") (r as Promise<unknown>).catch(() => {});
+  } catch { /* no listeners */ }
+}
+
+// ---- Auto-approve sessions, activity log, auto-lock ----
+
+const AUTO_KEY = "clawd:autoApprove";
+const ACTIVITY_KEY = "clawd:activity";
+const ACTIVE_KEY = "clawd:lastActive";
+const DEFAULT_AUTO_LOCK_MINUTES = 30;
+
+async function loadSessions(): Promise<Record<string, AutoApproveSession>> {
+  const out = await chrome.storage.session.get(AUTO_KEY);
+  const all = (out[AUTO_KEY] as Record<string, AutoApproveSession>) ?? {};
+  const now = Date.now();
+  for (const [o, sess] of Object.entries(all)) if (sess.expiresAt <= now) delete all[o];
+  return all;
+}
+async function saveSessions(all: Record<string, AutoApproveSession>): Promise<void> {
+  await chrome.storage.session.set({ [AUTO_KEY]: all });
+}
+async function getSession(origin: string): Promise<AutoApproveSession | undefined> {
+  return (await loadSessions())[origin];
+}
+async function endSession(origin?: string): Promise<void> {
+  if (!origin) { await chrome.storage.session.remove(AUTO_KEY); return; }
+  const all = await loadSessions();
+  delete all[origin];
+  await saveSessions(all);
+}
+async function loadActivity(): Promise<ActivityEntry[]> {
+  const out = await chrome.storage.local.get(ACTIVITY_KEY);
+  return (out[ACTIVITY_KEY] as ActivityEntry[]) ?? [];
+}
+async function logActivity(entry: ActivityEntry): Promise<void> {
+  const list = [entry, ...(await loadActivity())].slice(0, 200);
+  await chrome.storage.local.set({ [ACTIVITY_KEY]: list });
+}
+
+async function lockWallet(): Promise<void> {
+  unlocked = null;
+  await clearSession();
+  await endSession(); // auto-lock and manual lock end every auto-approve session
+  for (const action of pendingActions.values()) action.reject({ code: 4100, message: "Wallet locked" });
+  pendingActions.clear();
+  await notifyStateChanged();
+}
+
+/** Lock after inactivity. Only popup use counts as activity, never page requests. */
+async function enforceAutoLock(touch: boolean): Promise<void> {
+  const cfg = await loadConfig();
+  const minutes = cfg.autoLockMinutes ?? DEFAULT_AUTO_LOCK_MINUTES;
+  const out = await chrome.storage.session.get(ACTIVE_KEY);
+  const last = out[ACTIVE_KEY] as number | undefined;
+  if (unlocked && minutes > 0 && typeof last === "number" && Date.now() - last > minutes * 60_000) await lockWallet();
+  if (touch || typeof last !== "number") await chrome.storage.session.set({ [ACTIVE_KEY]: Date.now() });
+}
+
+// ---- Transaction preview + approval routing ----
+
+const TX_TYPES = new Set<PendingActionType>(["sign_transaction", "sign_b64", "sign_and_send", "sign_all"]);
+
+function txBytes(type: PendingActionType, extra: Partial<PendingActionView>): Uint8Array[] {
+  if (type === "sign_transaction") return [bs58.decode(extra.message ?? "")];
+  if (type === "sign_all") return (extra.transactions ?? []).map(bytesFromBase64);
+  return [bytesFromBase64(extra.transaction ?? "")];
+}
+
+async function buildPreviews(raws: Uint8Array[]): Promise<TxPreview[]> {
+  let rpc: PreviewRpc | null = null;
+  try { rpc = await connection(); } catch { rpc = null; }
+  const mine = accountAddresses();
+  return Promise.all(raws.map(async (raw) => {
+    try { return await previewTransaction(raw, mine, rpc); }
+    catch (e) { return undecodablePreview((e as Error).message ?? String(e)); }
+  }));
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+function setAutoBadge(tabId: number | undefined, count: number): void {
+  try {
+    const action = (chrome as unknown as { action?: { setBadgeText?: (d: object) => Promise<void>; setBadgeBackgroundColor?: (d: object) => Promise<void> } }).action;
+    void action?.setBadgeBackgroundColor?.({ color: "#14F195", ...(tabId !== undefined ? { tabId } : {}) })?.catch?.(() => {});
+    void action?.setBadgeText?.({ text: `${Math.min(count, 999)}`, ...(tabId !== undefined ? { tabId } : {}) })?.catch?.(() => {});
+  } catch { /* badge is best-effort */ }
+}
+
+/** Route a transaction request: simulate, then auto-approve within limits or ask. */
+async function requestTx(type: PendingActionType, origin: string, extra: Partial<PendingActionView>): Promise<unknown> {
+  let raws: Uint8Array[] | null = null;
+  try { raws = txBytes(type, extra); } catch { raws = null; }
+  const session = await getSession(origin);
+  if (session && raws) {
+    const previews = await withTimeout(buildPreviews(raws), 15_000).catch(() => null);
+    const elig = previews ? checkAutoApprove(session, previews) : { ok: false as const, reason: "simulation timed out" };
+    if (previews && elig.ok) {
+      // Reserve the budget before signing so concurrent requests cannot overspend.
+      const all = await loadSessions();
+      const live = all[origin];
+      if (live && checkAutoApprove(live, previews).ok) {
+        live.spentLamports += elig.outflowLamports;
+        live.count += 1;
+        await saveSessions(all);
+        const programs = [...new Set(previews.flatMap((p) => p.programs.map((x) => x.id)))];
+        try {
+          const result = await new Promise<unknown>((resolve, reject) => {
+            void resolveApprovedAction({ id: newId(), type, origin, ...extra, previews, resolve, reject });
+          });
+          const sig = (result as { signature?: string })?.signature;
+          await logActivity({ at: Date.now(), origin, type, auto: true, outflowLamports: elig.outflowLamports, programs, result: "approved", signature: sig });
+          setAutoBadge(extra.tabId, live.count);
+          notifyPopup();
+          return result;
+        } catch (err) {
+          await logActivity({ at: Date.now(), origin, type, auto: true, outflowLamports: elig.outflowLamports, programs, result: "failed", note: (err as { message?: string })?.message });
+          throw err;
+        }
+      }
+    }
+    return enqueueAction(type, origin, { ...extra, previews: previews ?? null, autoApproveNote: `Auto-approve did not apply: ${elig.ok ? "limits changed" : elig.reason}. Review manually.` });
+  }
+  let id = "";
+  const pending = enqueueAction(type, origin, { ...extra, previews: raws ? null : [undecodablePreview("invalid encoding")] }, (newIdValue) => { id = newIdValue; });
+  if (raws) {
+    void buildPreviews(raws).then((previews) => {
+      const action = pendingActions.get(id);
+      if (action) { action.previews = previews; notifyPopup(); }
+    });
+  }
+  return pending;
+}
+
+function looksLikeTransaction(bytes: Uint8Array): boolean {
+  try {
+    const m = VersionedMessage.deserialize(bytes);
+    return m.header.numRequiredSignatures > 0 && m.serialize().length === bytes.length;
+  } catch {
+    return false;
+  }
+}
+
+function utf8OrHex(bytes: Uint8Array): { text: string; isUtf8: boolean } {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    // Control characters other than whitespace suggest binary data.
+    if (/[\u0000-\u0008\u000e-\u001f\u007f]/.test(text)) throw new Error("binary");
+    return { text, isUtf8: true };
+  } catch {
+    return { text: "0x" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(""), isUtf8: false };
+  }
+}
+
+function sanitizeSendOptions(o: unknown): SendOptionsView | undefined {
+  if (!o || typeof o !== "object") return undefined;
+  const v = o as Record<string, unknown>;
+  const levels = ["processed", "confirmed", "finalized"];
+  const out: SendOptionsView = {};
+  if (typeof v.skipPreflight === "boolean") out.skipPreflight = v.skipPreflight;
+  if (typeof v.preflightCommitment === "string" && levels.includes(v.preflightCommitment)) out.preflightCommitment = v.preflightCommitment as SendOptionsView["preflightCommitment"];
+  if (typeof v.commitment === "string" && levels.includes(v.commitment)) out.commitment = v.commitment as SendOptionsView["commitment"];
+  if (Number.isInteger(v.maxRetries) && (v.maxRetries as number) >= 0) out.maxRetries = v.maxRetries as number;
+  if (Number.isInteger(v.minContextSlot) && (v.minContextSlot as number) >= 0) out.minContextSlot = v.minContextSlot as number;
+  return out;
 }
 
 // ---- Signing ----
@@ -340,31 +505,58 @@ function executeSignOnly(txBase64: string): string {
  * This is the primary computer-use path: an agent builds a tx with web3.js and
  * hands it to the wallet to sign+broadcast.
  */
-async function executeSignAndSend(txBase64: string): Promise<string> {
+async function executeSignAndSend(txBase64: string, options: SendOptionsView = {}): Promise<string> {
+  const signature = await signAndSendRaw(txBase64, options);
+  if (options.commitment) await waitForCommitment(signature, options.commitment);
+  return signature;
+}
+
+const COMMITMENT_RANK = { processed: 0, confirmed: 1, finalized: 2 } as const;
+
+async function waitForCommitment(signature: string, commitment: keyof typeof COMMITMENT_RANK, timeoutMs = 60_000): Promise<void> {
+  const conn = await connection();
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const st = (await conn.getSignatureStatuses([signature])).value[0];
+    if (st?.err) throw { code: -32603, message: `Transaction failed: ${JSON.stringify(st.err)}` };
+    const lvl = st?.confirmationStatus as keyof typeof COMMITMENT_RANK | undefined;
+    if (lvl && COMMITMENT_RANK[lvl] >= COMMITMENT_RANK[commitment]) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw { code: -32603, message: `Sent ${signature} but it did not reach "${commitment}" in time` };
+}
+
+async function signAndSendRaw(txBase64: string, options: SendOptionsView): Promise<string> {
   if (!unlocked) throw { code: 4100, message: "Wallet is locked" };
   const raw = bytesFromBase64(txBase64);
   const conn = await connection();
+  const sendOpts = {
+    skipPreflight: options.skipPreflight,
+    preflightCommitment: options.preflightCommitment,
+    maxRetries: options.maxRetries,
+    minContextSlot: options.minContextSlot,
+  };
   const looksVersioned = raw.length > 0 && (raw[0] & 0x80) !== 0;
   if (looksVersioned) {
     const vtx = VersionedTransaction.deserialize(raw);
     const keypairs = versionedMatchingKeypairs(vtx);
     if (keypairs.length === 0) throw { code: 4100, message: "No matching signer in this wallet" };
     vtx.sign(keypairs);
-    return await conn.sendRawTransaction(vtx.serialize());
+    return await conn.sendRawTransaction(vtx.serialize(), sendOpts);
   }
   try {
     const tx = Transaction.from(raw);
     const keypairs = legacyMatchingKeypairs(tx);
     if (keypairs.length === 0) throw { code: 4100, message: "No matching signer in this wallet" };
     tx.partialSign(...keypairs);
-    return await conn.sendRawTransaction(tx.serialize());
+    return await conn.sendRawTransaction(tx.serialize(), sendOpts);
   } catch (legacyErr) {
     try {
       const vtx = VersionedTransaction.deserialize(raw);
       const keypairs = versionedMatchingKeypairs(vtx);
       if (keypairs.length === 0) throw { code: 4100, message: "No matching signer in this wallet" };
       vtx.sign(keypairs);
-      return await conn.sendRawTransaction(vtx.serialize());
+      return await conn.sendRawTransaction(vtx.serialize(), sendOpts);
     } catch {
       const e = legacyErr as { message?: string };
       throw { code: -32602, message: `Could not sign/send transaction: ${e.message ?? "invalid transaction"}` };
@@ -376,6 +568,7 @@ async function executeSignAndSend(txBase64: string): Promise<string> {
 
 async function handleProviderRequest(req: ProviderRequest, origin: string, tabId?: number) {
   await ensureUnlocked();
+  await enforceAutoLock(false);
   const cfg = await loadConfig();
   switch (req.method) {
     case "wallet_getState":
@@ -390,6 +583,7 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
     case "wallet_disconnect": {
       if (cfg.authorizedOrigins.includes(origin)) {
         await saveConfig({ ...cfg, authorizedOrigins: cfg.authorizedOrigins.filter((o) => o !== origin) });
+        await endSession(origin);
         await broadcast("disconnected", null, origin);
       }
       return { ok: true };
@@ -413,14 +607,44 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
       if (!cfg.authorizedOrigins.includes(origin)) {
         throw { code: 4100, message: "Unauthorized origin" };
       }
-      const params = (req.params ?? {}) as { message?: string; display?: string };
-      if (typeof params.message !== "string" || !params.message)
-        throw { code: -32602, message: "message must be a non-empty UTF-8 string" };
+      const params = (req.params ?? {}) as { message?: string; messageB64?: string; signer?: string };
+      let bytes: Uint8Array;
+      if (typeof params.messageB64 === "string") {
+        try { bytes = bytesFromBase64(params.messageB64); } catch { throw { code: -32602, message: "messageB64 must be base64" }; }
+      } else if (typeof params.message === "string") bytes = new TextEncoder().encode(params.message);
+      else throw { code: -32602, message: "message (string) or messageB64 required" };
+      if (!bytes.length) throw { code: -32602, message: "message must not be empty" };
+      const view = utf8OrHex(bytes);
+      const signer = params.signer && accountAddresses().includes(params.signer)
+        ? params.signer
+        : cfg.selectedAccount ?? accountAddresses()[0];
       return (await enqueueAction("sign_message", origin, {
         tabId,
-        message: params.message,
-        signers: cfg.selectedAccount ? [cfg.selectedAccount] : accountAddresses().slice(0, 1),
+        message: view.text,
+        messageIsUtf8: view.isUtf8,
+        messageB64: Buffer.from(bytes).toString("base64"),
+        messageLooksLikeTransaction: looksLikeTransaction(bytes),
+        signers: signer ? [signer] : [],
       })) as { publicKey: string; signature: string };
+    }
+
+    case "wallet_signIn": {
+      if (!unlocked) throw { code: 4100, message: "Wallet is locked" };
+      const input = ((req.params ?? {}) as { input?: SignInInput }).input ?? {};
+      if (typeof input !== "object") throw { code: -32602, message: "signIn input must be an object" };
+      // Sign-in implies connect: an unconnected origin is asked to connect first.
+      if (!cfg.authorizedOrigins.includes(origin)) {
+        await enqueueAction("request_accounts", origin, { tabId });
+      }
+      const accounts = accountAddresses();
+      const checked = checkSignIn(input, origin, cfg.selectedAccount && !input.address ? [cfg.selectedAccount, ...accounts.filter((a) => a !== cfg.selectedAccount)] : accounts);
+      const text = buildSignInMessage({ ...input, domain: checked.domain, address: checked.address });
+      return (await enqueueAction("sign_in", origin, {
+        tabId,
+        message: text,
+        signers: [checked.address],
+        signIn: { text, address: checked.address, warnings: checked.warnings },
+      })) as { address: string; signedMessageB64: string; signature: string };
     }
 
     case "wallet_signTransaction":
@@ -431,10 +655,13 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
       }
       const params = (req.params ?? {}) as { message?: string; signer?: string[] };
       if (!params.message) throw { code: -32602, message: "message (base58) required" };
-      return (await enqueueAction("sign_transaction", origin, {
+      const mine = accountAddresses();
+      const signers = (params.signer ?? (cfg.selectedAccount ? [cfg.selectedAccount] : mine)).filter((a) => mine.includes(a));
+      if (!signers.length) throw { code: 4100, message: "No matching signer in this wallet" };
+      return (await requestTx("sign_transaction", origin, {
         tabId,
         message: params.message,
-        signers: params.signer ?? (cfg.selectedAccount ? [cfg.selectedAccount] : accountAddresses()),
+        signers,
       })) as SignTransactionResp;
     }
 
@@ -443,11 +670,12 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
       if (!cfg.authorizedOrigins.includes(origin)) {
         throw { code: 4100, message: "Unauthorized origin" };
       }
-      const params = (req.params ?? {}) as { transaction?: string };
+      const params = (req.params ?? {}) as { transaction?: string; options?: unknown };
       if (!params.transaction) throw { code: -32602, message: "transaction (base64) required" };
-      return (await enqueueAction("sign_and_send", origin, {
+      return (await requestTx("sign_and_send", origin, {
         tabId,
         transaction: params.transaction,
+        sendOptions: sanitizeSendOptions(params.options),
       })) as { signature: string };
     }
 
@@ -458,10 +686,26 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
       }
       const params = (req.params ?? {}) as { transaction?: string };
       if (!params.transaction) throw { code: -32602, message: "transaction (base64) required" };
-      return (await enqueueAction("sign_b64", origin, {
+      return (await requestTx("sign_b64", origin, {
         tabId,
         transaction: params.transaction,
       })) as { signedTransaction: string };
+    }
+
+    case "wallet_signAllTransactionsB64": {
+      if (!unlocked) throw { code: 4100, message: "Wallet is locked" };
+      if (!cfg.authorizedOrigins.includes(origin)) {
+        throw { code: 4100, message: "Unauthorized origin" };
+      }
+      const params = (req.params ?? {}) as { transactions?: unknown };
+      const txs = params.transactions;
+      if (!Array.isArray(txs) || !txs.length || txs.length > 50 || txs.some((t) => typeof t !== "string" || !t)) {
+        throw { code: -32602, message: "transactions must be 1-50 base64 strings" };
+      }
+      return (await requestTx("sign_all", origin, {
+        tabId,
+        transactions: txs as string[],
+      })) as { signedTransactions: string[] };
     }
 
     case "wallet_sendSol": {
@@ -496,18 +740,50 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
 
 // ---- Approvals resolved from popup ----
 
-async function approveAction(id: string): Promise<void> {
+function activityFor(action: PendingActionView, result: ActivityEntry["result"], extra: Partial<ActivityEntry> = {}): ActivityEntry {
+  const previews = action.previews ?? [];
+  return {
+    at: Date.now(), origin: action.origin, type: action.type, auto: false,
+    outflowLamports: previews.reduce((n, p) => n + p.solOutflowLamports, 0) || Math.round((action.amountSol ?? 0) * 1e9),
+    programs: [...new Set(previews.flatMap((p) => p.programs.map((x) => x.id)))],
+    result, ...extra,
+  };
+}
+
+async function approveAction(id: string, autoApprove?: AutoApproveRequest): Promise<void> {
   const action = pendingActions.get(id);
   if (!action) return;
+  // Validate the optional auto-approve session before consuming the action.
+  let session: AutoApproveSession | undefined;
+  if (autoApprove) {
+    if (!TX_TYPES.has(action.type)) throw new Error("Auto-approve can only be enabled from a transaction request");
+    session = createSession(action.origin, autoApprove);
+  }
   // Consume the action once, before awaiting storage or RPC. Double clicks must
   // not execute a transfer twice.
   pendingActions.delete(id);
   releaseDrainedPopup();
+  let result: unknown;
+  let failed: string | undefined;
+  const resolve = action.resolve;
+  const reject = action.reject;
+  action.resolve = (r) => { result = r; resolve(r); };
+  action.reject = (e) => { failed = e.message; reject(e); };
   try {
     await resolveApprovedAction(action);
   } catch (err) {
     const e = err as { code?: number; message?: string };
     action.reject({ code: e.code, message: e.message ?? String(err) });
+  }
+  if (session && !failed) {
+    // The approved request itself counts toward the new session's budget.
+    session.spentLamports = (action.previews ?? []).reduce((n, p) => n + p.solOutflowLamports, 0);
+    const all = await loadSessions();
+    all[action.origin] = session;
+    await saveSessions(all);
+  }
+  if (action.type !== "request_accounts") {
+    await logActivity(activityFor(action, failed ? "failed" : "approved", { signature: (result as { signature?: string })?.signature, note: failed }));
   }
 }
 
@@ -531,10 +807,30 @@ async function resolveApprovedAction(action: PendingAction): Promise<void> {
   if (action.type === "sign_message") {
     const signer = action.signers?.[0] ?? cfg.selectedAccount;
     if (!signer) throw new Error("No signer");
-    // message is treated as UTF-8 text for signing display; sign raw bytes.
-    const bytes = new TextEncoder().encode(action.message ?? "");
+    // Sign the exact bytes the dApp supplied (text or binary).
+    const bytes = action.messageB64 !== undefined ? bytesFromBase64(action.messageB64) : new TextEncoder().encode(action.message ?? "");
     const signature = signMessageBytes(signer, bytes);
     action.resolve({ publicKey: signer, signature: bs58.encode(signature) });
+    return;
+  }
+
+  if (action.type === "sign_in") {
+    const signer = action.signIn?.address ?? action.signers?.[0];
+    if (!signer || !action.signIn) throw new Error("No signer");
+    const bytes = new TextEncoder().encode(action.signIn.text);
+    const signature = signMessageBytes(signer, bytes);
+    action.resolve({ address: signer, signedMessageB64: Buffer.from(bytes).toString("base64"), signature: bs58.encode(signature) });
+    return;
+  }
+
+  if (action.type === "sign_all") {
+    try {
+      const signedTransactions = (action.transactions ?? []).map((t) => executeSignOnly(t));
+      action.resolve({ signedTransactions });
+    } catch (err) {
+      const e = err as { code?: number; message?: string };
+      action.reject({ code: e.code, message: e.message ?? String(err) });
+    }
     return;
   }
 
@@ -552,7 +848,7 @@ async function resolveApprovedAction(action: PendingAction): Promise<void> {
 
   if (action.type === "sign_and_send") {
     try {
-      const signature = await executeSignAndSend(action.transaction ?? "");
+      const signature = await executeSignAndSend(action.transaction ?? "", action.sendOptions ?? {});
       action.resolve({ signature });
     } catch (err) {
       const e = err as { code?: number; message?: string };
@@ -588,6 +884,7 @@ async function resolveApprovedAction(action: PendingAction): Promise<void> {
 function declineAction(id: string): void {
   const action = pendingActions.get(id);
   if (!action) return;
+  if (action.type !== "request_accounts") void logActivity(activityFor(action, "rejected"));
   action.reject({ code: 4001, message: "User rejected the request" });
   pendingActions.delete(id);
   releaseDrainedPopup();
@@ -620,11 +917,15 @@ async function popupGetState(): Promise<PopupState> {
     agentMode: cfg.agentMode,
     helmsmanApiUrl: await helmsmanApi(),
     customRpcUrl: cfg.customRpcUrl ?? "",
+    autoApprove: Object.values(await loadSessions()),
+    activity: (await loadActivity()).slice(0, 50),
+    autoLockMinutes: cfg.autoLockMinutes ?? DEFAULT_AUTO_LOCK_MINUTES,
   };
 }
 
 async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
   await ensureUnlocked();
+  await enforceAutoLock(true);
   const cfg = await loadConfig();
   switch (req.method) {
     case "popup_getState":
@@ -688,10 +989,32 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
     }
 
     case "popup_lockWallet":
-      unlocked = null;
-      await clearSession();
-      await notifyStateChanged();
+      await lockWallet();
       return { ok: true };
+
+    case "popup_setAutoApprove": {
+      const { origin, ...limits } = (req.params ?? {}) as AutoApproveRequest & { origin?: string };
+      if (!origin || !cfg.authorizedOrigins.includes(origin)) throw new Error("Only connected sites can use auto-approve");
+      if (!unlocked) throw new Error("Wallet is locked");
+      const all = await loadSessions();
+      all[origin] = createSession(origin, limits);
+      await saveSessions(all);
+      return { autoApprove: Object.values(all) };
+    }
+
+    case "popup_revokeAutoApprove": {
+      const { origin } = (req.params ?? {}) as { origin?: string };
+      await endSession(origin || undefined);
+      return { autoApprove: Object.values(await loadSessions()) };
+    }
+
+    case "popup_setAutoLock": {
+      const { minutes } = (req.params ?? {}) as { minutes?: number };
+      const m = Number(minutes);
+      if (!Number.isInteger(m) || m < 1 || m > 24 * 60) throw new Error("Auto-lock must be 1-1440 minutes");
+      await saveConfig({ ...cfg, autoLockMinutes: m });
+      return { autoLockMinutes: m };
+    }
 
     case "popup_addAccount": {
       if (!unlocked) throw new Error("Wallet is locked");
@@ -772,9 +1095,9 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
       return { pendingActions: pendingViews() };
 
     case "popup_approveAction": {
-      const { id } = (req.params ?? {}) as { id?: string };
+      const { id, autoApprove } = (req.params ?? {}) as { id?: string; autoApprove?: AutoApproveRequest };
       if (!id) throw new Error("id required");
-      await approveAction(id);
+      await approveAction(id, autoApprove);
       return { ok: true, pendingActions: pendingViews() };
     }
 
@@ -791,7 +1114,10 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
         ...cfg,
         authorizedOrigins: cfg.authorizedOrigins.filter((o) => o !== origin),
       });
-      if (origin) await broadcast("disconnected", null, origin);
+      if (origin) {
+        await endSession(origin);
+        await broadcast("disconnected", null, origin);
+      }
       return { authorizedOrigins: (await loadConfig()).authorizedOrigins };
     }
 

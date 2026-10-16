@@ -29,6 +29,12 @@ function request(channel: string, replyChannel: string, payload: object): Promis
   });
 }
 
+function bytesToB64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
 // ---------------------------------------------------------------------------
 // window.solana — Solana wallet provider (compatible with the referenced
 // Solana extension's request/event API).
@@ -85,35 +91,31 @@ class SolanaProvider {
   }
 
   async signMessage(message: string | Uint8Array): Promise<{ publicKey: string; signature: string }> {
-    // dApps usually pass UTF-8 bytes (Phantom-style). The wallet shows and signs
-    // the message as UTF-8 text, so decode bytes strictly instead of letting
-    // them serialize to "[object Object]".
-    let text: string;
-    if (typeof message === "string") text = message;
-    else if (ArrayBuffer.isView(message)) {
-      // Realm-safe: iframe-created Uint8Arrays fail `instanceof` against this
-      // window's Uint8Array. Copy into a local view, then decode with ignoreBOM
-      // so a leading EF BB BF is kept (default TextDecoder strips it and the
-      // re-encoded signature would not match the dApp's original bytes).
-      const bytes = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-      try {
-        text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-      } catch {
-        throw { code: -32602, message: "signMessage only supports UTF-8 text messages" };
-      }
-    } else throw { code: -32602, message: "signMessage expects a string or Uint8Array" };
+    // Strings are signed as UTF-8. Bytes (any content, including binary) are
+    // signed exactly as given; the wallet shows UTF-8 text when valid, else hex.
+    if (typeof message === "string") {
+      return (await this.request({ method: "wallet_signMessage", params: { message } })) as { publicKey: string; signature: string };
+    }
+    if (!ArrayBuffer.isView(message)) throw { code: -32602, message: "signMessage expects a string or Uint8Array" };
+    // Realm-safe copy: iframe-created Uint8Arrays fail `instanceof` here.
+    const bytes = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
     return (await this.request({
       method: "wallet_signMessage",
-      params: { message: text },
+      params: { messageB64: bytesToB64(bytes) },
     })) as { publicKey: string; signature: string };
+  }
+
+  // Sign-In With Solana. The wallet builds the message and checks the domain.
+  async signIn(input: Record<string, unknown> = {}): Promise<{ address: string; signedMessageB64: string; signature: string }> {
+    return (await this.request({ method: "wallet_signIn", params: { input } })) as { address: string; signedMessageB64: string; signature: string };
   }
 
   // Computer-use: hand a client-built transaction (base64, legacy or versioned)
   // to the wallet to sign and broadcast. Returns the transaction signature.
-  async signAndSendTransaction(transactionBase64: string): Promise<{ signature: string }> {
+  async signAndSendTransaction(transactionBase64: string, options?: Record<string, unknown>): Promise<{ signature: string }> {
     return (await this.request({
       method: "wallet_signAndSendTransaction",
-      params: { transaction: transactionBase64 },
+      params: { transaction: transactionBase64, options },
     })) as { signature: string };
   }
 
@@ -124,6 +126,14 @@ class SolanaProvider {
       method: "wallet_signTransactionB64",
       params: { transaction: transactionBase64 },
     })) as { signedTransaction: string };
+  }
+
+  // Sign several base64 transactions in one approval (batched preview).
+  async signAllTransactions(transactionsBase64: string[]): Promise<{ signedTransactions: string[] }> {
+    return (await this.request({
+      method: "wallet_signAllTransactionsB64",
+      params: { transactions: transactionsBase64 },
+    })) as { signedTransactions: string[] };
   }
 
   async sendSol(to: string, sol: number): Promise<{ signature: string }> {

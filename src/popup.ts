@@ -1,8 +1,11 @@
 import type {
+  ActivityEntry,
+  AutoApproveSession,
   Network,
   PendingActionView,
   PopupMethod,
   PopupState,
+  TxPreview,
 } from "./protocol.js";
 // Type-only import: keeps Clawd runtime code (and its deps) out of a shared chunk.
 import type { ClawdOverview, ClawdSignedTransfer } from "./clawd/chain.js";
@@ -245,21 +248,13 @@ async function renderWallet(state: PopupState) {
   });
   app.append(el("div", { class: "card" }, [el("h2", {}, ["Send"]), to, amt, send]));
 
-  // Authorized origins
-  if (state.authorizedOrigins.length) {
-    const auth = el("div", { class: "card" }, [el("h2", {}, ["Connected sites"])]);
-    for (const origin of state.authorizedOrigins) {
-      const row = el("div", { class: "row spread" }, [el("code", {}, [origin])]);
-      const del = el("button", { class: "ghost sm" }, ["Revoke"]);
-      del.addEventListener("click", async () => {
-        await rpc("popup_deleteAuthorizedOrigin", { origin });
-        render();
-      });
-      row.append(del);
-      auth.append(row);
-    }
-    app.append(auth);
-  }
+  // Connected sites + auto-approve sessions + per-site activity
+  if (state.authorizedOrigins.length) app.append(renderSitePanel(state));
+
+  const lockSel = el("select", { "aria-label": "Auto-lock" }, [5, 15, 30, 60, 240].map((m) =>
+    el("option", { value: String(m), ...(m === state.autoLockMinutes ? { selected: "selected" } : {}) }, [`${m} min`]))) as HTMLSelectElement;
+  lockSel.addEventListener("change", async () => { await rpc("popup_setAutoLock", { minutes: Number(lockSel.value) }); showError("Auto-lock updated"); });
+  app.append(el("div", { class: "card" }, [el("h2", {}, ["Auto-lock"]), el("p", { class: "muted" }, ["Lock after inactivity. Locking ends every auto-approve session."]), lockSel]));
 
   const api = el("input", {
     type: "url",
@@ -311,50 +306,188 @@ async function renderWallet(state: PopupState) {
   );
 }
 
+const KNOWN_SAFE_LIST = [
+  "11111111111111111111111111111111",
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+];
+const TX_TYPES = new Set(["sign_transaction", "sign_b64", "sign_and_send", "sign_all"]);
+const sol = (lamports: number) => `${(lamports / 1e9).toLocaleString(undefined, { maximumFractionDigits: 9 })} SOL`;
+
+function kv(k: string, v: string): HTMLElement {
+  return el("div", { class: "kv" }, [el("span", { class: "muted" }, [k]), el("span", {}, [v])]);
+}
+
+function renderPreview(p: TxPreview, label?: string): HTMLElement {
+  const card = el("div", { class: "card", "data-testid": "tx-preview" });
+  if (label) card.append(el("h2", {}, [label]));
+  for (const w of p.warnings) card.append(el("div", { class: `warn w-${w.level}`, "data-code": w.code }, [w.message]));
+  if (!p.simulation.ok) {
+    card.append(el("p", { class: "muted" }, ["Could not simulate: estimated changes unavailable. Check the raw details below before approving."]));
+  }
+  const changes = el("div", {}, [el("h2", {}, ["Estimated balance changes"])]);
+  if (p.simulation.ok && !p.balanceChanges.length) changes.append(el("p", { class: "muted" }, ["No balance changes for your accounts (besides the fee)."]));
+  for (const c of p.balanceChanges) {
+    const neg = c.uiDelta.startsWith("-");
+    changes.append(el("div", { class: "delta" }, [
+      el("span", { title: c.mint ?? "SOL" }, [c.symbol]),
+      el("span", { class: neg ? "neg" : "pos" }, [c.uiDelta]),
+    ]));
+  }
+  if (p.simulation.ok) card.append(changes);
+  card.append(
+    kv("Network fee", sol(p.baseFeeLamports)),
+    kv("Priority fee", `${sol(p.priorityFeeLamports)} (${p.computeUnitPriceMicroLamports} µL/CU × ${p.computeUnitLimit.toLocaleString()} CU)`),
+    kv("Total fee", sol(p.feeLamports)),
+    kv("Max SOL leaving wallet", sol(p.solOutflowLamports)),
+    kv("Version", String(p.version)),
+  );
+  if (p.simulation.unitsConsumed) card.append(kv("Simulated compute", p.simulation.unitsConsumed.toLocaleString() + " CU"));
+  const progs = el("div", {}, [el("h2", {}, ["Programs"])]);
+  for (const pr of p.programs) {
+    progs.append(el("div", { class: "prog" }, [
+      el("span", { class: pr.name ? "" : "unknown" }, [pr.name ?? "Unknown program"]),
+      " ",
+      el("code", { title: pr.id }, [short(pr.id)]),
+    ]));
+  }
+  card.append(progs);
+  const wr = el("details", {}, [el("summary", {}, [`Writable accounts (${p.writable.length})`]), el("pre", {}, [p.writable.join("\n")])]);
+  const raw = el("details", {}, [el("summary", {}, [`Raw instructions (${p.instructions.length})`])]);
+  raw.append(el("pre", {}, [p.instructions.map((ix) =>
+    `#${ix.index + 1} ${ix.programName ?? "Unknown"} ${ix.programId}\n` +
+    (ix.summary ? `  ${ix.summary}\n` : "") +
+    ix.accounts.map((a) => `  ${a.signer ? "S" : "-"}${a.writable ? "W" : "-"} ${a.address}`).join("\n") +
+    `\n  data: ${ix.dataHex || "(empty)"}`).join("\n\n")]));
+  card.append(wr, raw);
+  if (p.simulation.logs?.length || p.simulation.error) {
+    card.append(el("details", {}, [el("summary", {}, ["Simulation logs"]), el("pre", {}, [[p.simulation.error ?? "", ...(p.simulation.logs ?? [])].filter(Boolean).join("\n")])]));
+  }
+  return card;
+}
+
+function autoApproveForm(defaultPrograms: string[], onSubmit: (req: { durationMs: number; maxTotalSol: number; maxPerTxSol: number; allowedPrograms: string[] }) => void, submitLabel?: string): HTMLElement {
+  const box = el("div", { class: "autoform" });
+  const expiry = el("select", {}, [
+    el("option", { value: String(15 * 60_000) }, ["15 minutes"]),
+    el("option", { value: String(3600_000) }, ["1 hour"]),
+    el("option", { value: String(24 * 3600_000) }, ["24 hours"]),
+    el("option", { value: "custom" }, ["Custom (minutes)"]),
+  ]) as HTMLSelectElement;
+  const custom = el("input", { type: "number", min: "1", max: "10080", placeholder: "minutes", style: "display:none" }) as HTMLInputElement;
+  expiry.addEventListener("change", () => { custom.style.display = expiry.value === "custom" ? "" : "none"; });
+  const total = el("input", { type: "number", min: "0", step: "0.01", value: "0.1", "aria-label": "Max total SOL" }) as HTMLInputElement;
+  const perTx = el("input", { type: "number", min: "0", step: "0.01", value: "0.02", "aria-label": "Max SOL per transaction" }) as HTMLInputElement;
+  const programs = el("textarea", { rows: "3", "aria-label": "Allowed program IDs" }) as HTMLTextAreaElement;
+  programs.value = defaultPrograms.join("\n");
+  box.append(
+    el("label", {}, ["Expires after", expiry, custom]),
+    el("label", {}, ["Max total SOL outflow", total]),
+    el("label", {}, ["Max SOL per transaction", perTx]),
+    el("label", {}, ["Allowed program IDs (one per line)", programs]),
+    el("p", { class: "muted" }, ["Transactions are still simulated. Anything with errors, authority/owner changes, closes to other owners, token approvals or delegations, other programs, or over the limits asks you as usual. Locking the wallet ends the session."]),
+  );
+  if (submitLabel) {
+    const go = el("button", { class: "primary" }, [submitLabel]);
+    go.addEventListener("click", () => onSubmit(read()));
+    box.append(go);
+  }
+  function read() {
+    const minutes = expiry.value === "custom" ? Number(custom.value) : Number(expiry.value) / 60_000;
+    return {
+      durationMs: minutes * 60_000,
+      maxTotalSol: Number(total.value),
+      maxPerTxSol: Number(perTx.value),
+      allowedPrograms: programs.value.split(/\s+/).filter(Boolean),
+    };
+  }
+  (box as HTMLElement & { read?: typeof read }).read = read;
+  return box;
+}
+
 function renderApprovals(state: PopupState) {
+  document.body.classList.add("wide");
   const action = state.pendingActions[0];
   const titles: Record<PendingActionView["type"], string> = {
     request_accounts: "Connection request",
     sign_transaction: "Approve transaction",
     sign_message: "Sign message",
     sign_and_send: "Approve & send transaction",
-    sign_b64: "Sign swap transaction",
+    sign_b64: "Approve transaction",
+    sign_all: "Approve transactions",
+    sign_in: "Sign in request",
     send_sol: "Approve SOL transfer",
   };
-  app.append(el("h1", {}, [titles[action.type]]), el("p", { class: "muted" }, [action.origin]));
+  const queue = state.pendingActions.length > 1 ? ` (1 of ${state.pendingActions.length})` : "";
+  app.append(el("h1", {}, [titles[action.type] + queue]), el("p", { class: "muted" }, [action.origin]));
+  if (action.autoApproveNote) app.append(el("div", { class: "warn w-info" }, [action.autoApproveNote]));
 
   const details = el("div", { class: "card" });
+  let autoBox: (HTMLElement & { read?: () => { durationMs: number; maxTotalSol: number; maxPerTxSol: number; allowedPrograms: string[] } }) | null = null;
+  let autoToggle: HTMLInputElement | null = null;
   if (action.type === "request_accounts") {
     details.append(el("p", {}, ["This site wants to view your wallet accounts:"]));
     for (const a of state.accounts) details.append(el("code", { class: "block" }, [a]));
   } else if (action.type === "sign_message") {
-    details.append(el("p", {}, ["Message:"]), el("div", { class: "mnemonic" }, [action.message ?? ""]));
+    if (action.messageLooksLikeTransaction) details.append(el("div", { class: "warn w-danger" }, ["These bytes look like a Solana transaction. Signing them could authorize a transaction. Only continue if you trust this site."]));
+    details.append(
+      el("p", {}, [action.messageIsUtf8 === false ? "Message (binary, shown as hex):" : "Message:"]),
+      el("div", { class: action.messageIsUtf8 === false ? "mnemonic small" : "mnemonic" }, [action.message ?? ""]),
+      el("p", { class: "muted" }, [`Signer: ${(action.signers ?? []).map(short).join(", ")}`]),
+    );
+  } else if (action.type === "sign_in") {
+    for (const w of action.signIn?.warnings ?? []) details.append(el("div", { class: "warn w-warn" }, [w]));
+    details.append(
+      el("p", {}, ["This site asks you to sign in. Domain verified against the requesting page."]),
+      el("div", { class: "mnemonic small", style: "white-space:pre-wrap;font-size:11px;max-height:200px" }, [action.signIn?.text ?? ""]),
+    );
   } else if (action.type === "send_sol") {
     details.append(
       el("p", {}, [`Send ${action.amountSol ?? 0} SOL to:`]),
       el("code", { class: "block" }, [action.to ?? ""]),
     );
-  } else if (action.type === "sign_and_send" || action.type === "sign_b64") {
-    details.append(
-      el("p", {}, [
-        action.type === "sign_b64"
-          ? "This site wants the wallet to sign a swap transaction."
-          : "This site wants the wallet to sign and broadcast a transaction.",
-      ]),
-      el("div", { class: "mnemonic small" }, [action.transaction ?? ""]),
-    );
   } else {
-    details.append(
-      el("p", {}, ["Transaction message (base58):"]),
-      el("div", { class: "mnemonic small" }, [action.message ?? ""]),
-      el("p", { class: "muted" }, [`Signers: ${(action.signers ?? []).map(short).join(", ")}`]),
-    );
+    const n = action.type === "sign_all" ? action.transactions?.length ?? 0 : 1;
+    details.append(el("p", {}, [
+      action.type === "sign_and_send"
+        ? "This site wants the wallet to sign and broadcast a transaction."
+        : n > 1 ? `This site wants the wallet to sign ${n} transactions (not broadcast).` : "This site wants the wallet to sign a transaction (not broadcast).",
+    ]));
+    if (action.sendOptions && Object.keys(action.sendOptions).length) {
+      details.append(el("p", { class: "muted" }, [`Send options: ${JSON.stringify(action.sendOptions)}`]));
+    }
   }
   app.append(details);
 
+  if (TX_TYPES.has(action.type)) {
+    if (!action.previews) {
+      app.append(el("div", { class: "card", "data-testid": "simulating" }, ["Simulating transaction…"]));
+    } else {
+      const total = action.previews.length;
+      action.previews.forEach((p, i) => app.append(renderPreview(p, total > 1 ? `Transaction ${i + 1} of ${total}` : undefined)));
+      const blocked = action.previews.some((p) => p.blocking.length || !p.simulation.ok);
+      if (!blocked) {
+        const progs = [...new Set(action.previews.flatMap((p) => p.programs.map((x) => x.id)))].filter((id) => id !== "ComputeBudget111111111111111111111111111111");
+        autoToggle = el("input", { type: "checkbox", id: "auto-toggle" }) as HTMLInputElement;
+        autoBox = autoApproveForm(progs, () => {});
+        autoBox.style.display = "none";
+        autoToggle.addEventListener("change", () => { autoBox!.style.display = autoToggle!.checked ? "" : "none"; });
+        app.append(el("div", { class: "card" }, [
+          el("label", { for: "auto-toggle", class: "row" }, [autoToggle, `Auto-approve similar requests from ${action.origin}`]),
+          autoBox,
+        ]));
+      }
+    }
+  }
+
   const approve = el("button", { class: "primary" }, ["Approve"]);
   approve.addEventListener("click", async () => {
-    await rpc("popup_approveAction", { id: action.id });
+    try {
+      await rpc("popup_approveAction", { id: action.id, autoApprove: autoToggle?.checked && autoBox?.read ? autoBox.read() : undefined });
+    } catch (e) {
+      return showError((e as Error).message);
+    }
     const next = await rpc<PopupState>("popup_getState");
     if (isNotification && next.pendingActions.length === 0) window.close();
     else render();
@@ -369,10 +502,56 @@ function renderApprovals(state: PopupState) {
   app.append(el("div", { class: "row" }, [approve, decline]));
 }
 
+function renderSitePanel(state: PopupState): HTMLElement {
+  const auth = el("div", { class: "card" }, [el("h2", {}, ["Connected sites"])]);
+  const sessions = new Map<string, AutoApproveSession>(state.autoApprove.map((s) => [s.origin, s]));
+  for (const origin of state.authorizedOrigins) {
+    const sess = sessions.get(origin);
+    const row = el("div", { class: "row spread" }, [el("code", {}, [origin])]);
+    if (sess) row.append(el("span", { class: "pill auto" }, [`auto · ${Math.max(0, Math.round((sess.expiresAt - Date.now()) / 60_000))}m`]));
+    const del = el("button", { class: "ghost sm" }, ["Revoke"]);
+    del.addEventListener("click", async () => {
+      await rpc("popup_deleteAuthorizedOrigin", { origin });
+      render();
+    });
+    row.append(del);
+    auth.append(row);
+    if (sess) {
+      auth.append(el("p", { class: "muted" }, [`Auto-approve: ${sol(sess.spentLamports)} of ${sol(sess.maxTotalLamports)} used, ≤ ${sol(sess.maxPerTxLamports)}/tx, ${sess.count} auto-approved, ${sess.allowedPrograms.length} programs.`]));
+      const stop = el("button", { class: "ghost sm" }, ["Stop auto-approve"]);
+      stop.addEventListener("click", async () => { await rpc("popup_revokeAutoApprove", { origin }); render(); });
+      auth.append(stop);
+    } else {
+      const details = el("details", {}, [el("summary", {}, ["Auto-approve…"])]);
+      details.append(autoApproveForm(KNOWN_SAFE_LIST, async (req) => {
+        try { await rpc("popup_setAutoApprove", { origin, ...req }); render(); } catch (e) { showError((e as Error).message); }
+      }, "Enable auto-approve"));
+      auth.append(details);
+    }
+    const acts = state.activity.filter((a) => a.origin === origin).slice(0, 8);
+    if (acts.length) {
+      const list = el("details", {}, [el("summary", {}, [`Activity (${acts.length})`])]);
+      for (const a of acts) list.append(activityRow(a));
+      auth.append(list);
+    }
+  }
+  return auth;
+}
+
+function activityRow(a: ActivityEntry): HTMLElement {
+  return el("div", { class: "activity" }, [
+    `${new Date(a.at).toLocaleTimeString()} · ${a.type} · ${a.result}`,
+    a.auto ? el("span", { class: "pill auto" }, ["auto"]) : "",
+    a.outflowLamports ? ` · ${sol(a.outflowLamports)}` : "",
+    a.signature ? el("code", { title: a.signature }, [" " + short(a.signature)]) : "",
+  ]);
+}
+
 render().catch((e) => showError((e as Error).message));
 
 // Keep the notification popup fresh if new actions arrive.
 chrome.runtime.onMessage?.addListener((msg) => {
+  if (msg?.type === "clawd:refresh" && !showingBackup) render();
   if (msg?.type === "solana:event" && msg.event === "stateChanged" && !showingBackup) render();
 });
 

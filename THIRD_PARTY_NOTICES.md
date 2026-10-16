@@ -11,7 +11,10 @@ Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 | `@wallet-standard/features` (types) | 1.1.1 | Apache-2.0 | Solana Labs / Wallet Standard contributors |
 | `@solana/wallet-standard-features` (types) | 1.5.0 | Apache-2.0 | Solana Labs / Wallet Standard contributors |
 | `@wallet-standard/app` (tests only, not shipped) | 1.1.1 | Apache-2.0 | Solana Labs / Wallet Standard contributors |
+| `@solana/wallet-adapter-react`, `-react-ui`, `-base` (test fixture only, not shipped) | 0.15.40 / 0.9.40 / 0.9.28 | Apache-2.0 | Solana Labs |
+| `react`, `react-dom` (test fixture only, not shipped) | 18.3.1 | MIT | Meta Platforms, Inc. |
 
+The transaction preview, auto-approve and SIWS code (`src/tx/`) is original Clawd code.
 No source code from the Backpack wallet (Coral, GPL-3.0) is included.
 `src/wallet-standard.ts` is an original implementation written against the
 public Wallet Standard interfaces above; Backpack's Apache-2.0

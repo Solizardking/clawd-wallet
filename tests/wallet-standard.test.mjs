@@ -42,20 +42,22 @@ function load({ before = true, handler } = {}) {
   return { win, ctx, wallets, posted, deliver };
 }
 
-const defaultHandler = (calls) => async (msg) => {
+const defaultHandler = (calls) => { let authorized = false; return async (msg) => {
   calls.push(msg);
   switch (msg.method) {
     case 'wallet_requestAccounts':
-      if (msg.params?.promptAuthorization === false) throw new Error('Unauthorized. Request permissions first.');
+      if (msg.params?.promptAuthorization === false && !authorized) throw new Error('Unauthorized. Request permissions first.');
       return { accounts: [account] };
     case 'wallet_signMessage': return { publicKey: account, signature: sig };
     case 'wallet_signTransactionB64': return { signedTransaction: btoa('signed:' + atob(msg.params.transaction)) };
     case 'wallet_getCluster': return { title: 'Devnet', cluster: 'devnet' };
     case 'wallet_signAndSendTransaction': return { signature: sig };
+    case 'wallet_signAllTransactionsB64': return { signedTransactions: msg.params.transactions.map((t) => btoa('signed:' + atob(t))) };
+    case 'wallet_signIn': authorized = true; return { address: account, signedMessageB64: btoa('dapp.example wants you to sign in with your Solana account:\n' + account + '\n\nNonce: ' + msg.params.input.nonce), signature: sig };
     case 'wallet_disconnect': return { ok: true };
     default: throw new Error('unexpected ' + msg.method);
   }
-};
+}; };
 
 test('registers "Clawd Wallet" via register-wallet event (wallet loads after app)', () => {
   const { wallets } = load({ handler: defaultHandler([]) });
@@ -117,7 +119,11 @@ test('connect -> change event -> sign/send map onto consent-gated provider metho
   const msg = new TextEncoder().encode('hello clawd');
   const [m] = await w.features['solana:signMessage'].signMessage({ account: accounts[0], message: msg });
   assert.equal(calls.at(-1).method, 'wallet_signMessage');
-  assert.equal(calls.at(-1).params.message, 'hello clawd');
+  assert.equal(atob(calls.at(-1).params.messageB64), 'hello clawd');
+  assert.equal(calls.at(-1).params.signer, account);
+  // arbitrary (non-UTF-8) bytes are forwarded too
+  await w.features['solana:signMessage'].signMessage({ account: accounts[0], message: new Uint8Array([0xff, 0x00, 0xfe]) });
+  assert.deepEqual([...atob(calls.at(-1).params.messageB64)].map((c) => c.charCodeAt(0)), [0xff, 0x00, 0xfe]);
   assert.deepEqual([...m.signature], [...bs58.decode(sig)]);
 
   const tx = new Uint8Array([1, 2, 3]);
@@ -127,8 +133,17 @@ test('connect -> change event -> sign/send map onto consent-gated provider metho
 
   await assert.rejects(w.features['solana:signAndSendTransaction'].signAndSendTransaction({ account: accounts[0], transaction: tx, chain: 'solana:mainnet' }), /Switch network/);
   assert.notEqual(calls.at(-1).method, 'wallet_signAndSendTransaction', 'chain mismatch must not reach signing');
-  const [s] = await w.features['solana:signAndSendTransaction'].signAndSendTransaction({ account: accounts[0], transaction: tx, chain: 'solana:devnet' });
+  const [s] = await w.features['solana:signAndSendTransaction'].signAndSendTransaction({ account: accounts[0], transaction: tx, chain: 'solana:devnet', options: { skipPreflight: true, preflightCommitment: 'processed', maxRetries: 3, minContextSlot: 7, commitment: 'confirmed' } });
   assert.equal(calls.at(-1).method, 'wallet_signAndSendTransaction');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1).params.options)), { skipPreflight: true, preflightCommitment: 'processed', maxRetries: 3, minContextSlot: 7, commitment: 'confirmed' });
+
+  // several inputs = one batched signAllTransactions approval
+  const outs = await w.features['solana:signTransaction'].signTransaction(
+    { account: accounts[0], transaction: new Uint8Array([4]), chain: 'solana:devnet' },
+    { account: accounts[0], transaction: new Uint8Array([5]), chain: 'solana:devnet' });
+  assert.equal(calls.at(-1).method, 'wallet_signAllTransactionsB64');
+  assert.equal(calls.at(-1).params.transactions.length, 2);
+  assert.deepEqual([...outs].map((o) => new TextDecoder().decode(o.signedTransaction)), ['signed:\x04', 'signed:\x05']);
   assert.deepEqual([...s.signature], [...bs58.decode(sig)]);
 
   await assert.rejects(w.features['solana:signTransaction'].signTransaction({ account: accounts[0], transaction: tx, chain: 'clawd:mainnet' }), /Unsupported chain/);
@@ -141,16 +156,16 @@ test('connect -> change event -> sign/send map onto consent-gated provider metho
   off();
 });
 
-test('signIn builds a SIWS message with the page domain and signs it via the approval flow', async () => {
+test('signIn forwards the full SIWS input to the wallet (which builds and checks it)', async () => {
   const calls = [];
   const { wallets } = load({ handler: defaultHandler(calls) });
-  const [out] = await wallets[0].features['solana:signIn'].signIn({ statement: 'Sign in to test', nonce: 'abc12345' });
-  const text = new TextDecoder().decode(out.signedMessage);
-  assert.match(text, /^dapp\.example wants you to sign in with your Solana account:\nFrJPDJ/);
-  assert.match(text, /Nonce: abc12345/);
-  assert.equal(calls.at(-1).method, 'wallet_signMessage');
-  assert.equal(calls.at(-1).params.message, text);
+  const input = { domain: 'dapp.example', statement: 'Sign in to test', nonce: 'abc12345', uri: 'https://dapp.example/login', version: '1', chainId: 'solana:devnet', issuedAt: '2026-10-16T17:00:00Z', resources: ['https://dapp.example/tos'] };
+  const [out] = await wallets[0].features['solana:signIn'].signIn(input);
+  const signInCall = calls.find((c) => c.method === 'wallet_signIn');
+  assert.deepEqual(JSON.parse(JSON.stringify(signInCall.params.input)), input);
+  assert.match(new TextDecoder().decode(out.signedMessage), /Nonce: abc12345/);
   assert.equal(out.account.address, account);
+  assert.deepEqual([...out.signature], [...bs58.decode(sig)]);
 });
 
 test('bridge ignores replies/events from other origins or windows', async () => {

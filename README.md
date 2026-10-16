@@ -3,7 +3,7 @@
 <img src="docs/assets/banner.svg" alt="Clawd Wallet — Solana wallet for agents, consent on every signature" width="100%"/>
 
 <p>
-  <a href="https://github.com/Solizardking/clawd-wallet/pulls"><img alt="version" src="https://img.shields.io/badge/version-0.4.2-9945FF?style=for-the-badge&labelColor=0B0B14"/></a>
+  <a href="https://github.com/Solizardking/clawd-wallet/pulls"><img alt="version" src="https://img.shields.io/badge/version-0.5.0-9945FF?style=for-the-badge&labelColor=0B0B14"/></a>
   <img alt="Manifest V3" src="https://img.shields.io/badge/Chrome-Manifest%20V3-14F195?style=for-the-badge&logo=googlechrome&logoColor=14F195&labelColor=0B0B14"/>
   <img alt="Solana" src="https://img.shields.io/badge/Solana-window.solana-9945FF?style=for-the-badge&logo=solana&logoColor=white&labelColor=0B0B14"/>
   <img alt="Consent" src="https://img.shields.io/badge/consent-every%20connect%20%C2%B7%20sign%20%C2%B7%20send-14F195?style=for-the-badge&labelColor=0B0B14"/>
@@ -48,6 +48,10 @@
 | --- | --- |
 | 🦞 **`window.solana` provider** | `connect`, `signMessage` (string or UTF-8 bytes), `signTransaction` and `signAndSendTransaction` (base64-serialized transactions) for dApps. |
 | 🧩 **Wallet Standard** | Registers as **Clawd Wallet** for any dApp using `@wallet-standard/app` / Solana wallet-adapter: `standard:connect` (incl. `silent`), `standard:disconnect`, `standard:events`, `solana:signTransaction`, `solana:signAndSendTransaction`, `solana:signMessage`, `solana:signIn`. Chains: `solana:mainnet`, `solana:devnet`, `solana:testnet`. Clawd Chain has no standard chain id and is not advertised. Every call goes through the same approval popup. |
+| 🔍 **Transaction preview** | Every `signTransaction`, `signAllTransactions` (one batched screen) and `signAndSendTransaction` is decoded (legacy + v0, lookup tables resolved over RPC) and simulated (`replaceRecentBlockhash`, `sigVerify: false`, post-state for your accounts and touched token accounts). Shows estimated SOL/token changes with symbols, network + priority fee, programs by name (System, Token, Token-2022, ATA, Compute Budget, Jupiter, Orca, Raydium, Meteora, Pump.fun, Memo…), writable accounts, raw instructions and logs. Warns on simulation errors, unknown programs, SetAuthority/Assign/owner changes, account closes, (unlimited) token approvals/delegations, large outflows and durable nonces. If simulation fails you still see the raw details and can approve or reject. Screenshot: [`docs/verification/tx-preview.png`](docs/verification/tx-preview.png). |
+| ⚡ **Auto-approve (opt-in, per site)** | Off by default, never global. Enable from the approval screen or *Connected sites* with an expiry (15m / 1h / 24h / custom), max total SOL outflow, max SOL per tx and allowed program IDs (default: the programs in the approving tx). Auto-approved txs are still simulated, show a badge count, and are logged in the site's activity list. Simulation errors, authority/owner changes, closes to other owners, token approvals/delegations, durable nonces, unlisted programs or over-limit txs always fall back to the manual preview. Revoke instantly; lock / auto-lock (default 30 min) ends every session. Messages, sign-in and SOL sends are never auto-approved. |
+| ✍️ **Messages & Sign-In With Solana** | `signMessage` signs arbitrary bytes (UTF-8 shown as text, otherwise hex; messages that parse as a transaction get a warning). `signIn` builds the full SIWS message (domain, address, statement, URI, version, chain ID, nonce, issued/expiration/not-before, request ID, resources), **rejects a domain that does not match the requesting page** and warns on URI/chain/time anomalies. |
+| 📡 **Send options** | `signAndSendTransaction` honors `skipPreflight`, `preflightCommitment`, `maxRetries`, `minContextSlot` and waits for `commitment` when given. |
 | 🕶️ **Private by default** | Sites see zero accounts, no lock state, network or balance until you approve them; wallet events only reach approved sites; *Connected sites* in the popup revokes access (the site gets `disconnected`). No telemetry, no version string, no web-accessible files to probe, no page globals beyond `window.solana`/`window.clawd`/`window.helmsman`. Never claims to be Phantom. |
 | 🤖 **Clawd AI assistant** | Built-in chat via the musebook-proxy (OpenRouter). It only receives what you type; messages that contain your recovery phrase, seed or a private key are refused locally and never sent. |
 | 🛡️ **Consent on everything** | New site connections, message signing, transaction signing and SOL transfers each open an approval window. Auto-approve is off, and old agent-mode settings are ignored. |
@@ -103,7 +107,7 @@ Web pages can't call the popup's own commands (`popup_*`). A forged request from
 5. Pin **Clawd Wallet** from the puzzle-piece menu.
 
 > [!NOTE]
-> v0.4.2 is not on the Chrome Web Store and has no GitHub release yet. The published v0.3.0 release came before the consent fix.
+> v0.5.0 is not on the Chrome Web Store and has no GitHub release yet. The published v0.3.0 release came before the consent fix.
 
 ### Clone and build
 
@@ -120,9 +124,9 @@ npm run build        # → dist/ (load-unpacked ready)
 
 ```bash
 npm run typecheck                 # tsc --noEmit
-npm test                          # rebuilt-bundle security regressions + public derivation vectors
+npm test                          # bundle security/privacy/auto-approve regressions, preview+SIWS unit tests, derivation vectors
 npx playwright install chromium   # once
-npm run test:browser              # consent UI end-to-end in a disposable Chromium profile
+npm run test:browser              # consent UI + wallet-adapter-react modal/connect/sign + preview screenshots (disposable profile, mocked devnet RPC)
 npm run pack                      # optional: build + write helmsman-extension.zip
 ```
 
@@ -157,7 +161,7 @@ Flags: `--headless`, `--keep-profile`, `--profile <dir>` (a named profile is kep
 | 📬 [**clawdmail.app**](https://clawdmail.app) | Clawd mail |
 | 🦞 [**$CLAWD**](https://musebook.trade/buy-clawd) | The Clawd token on Solana |
 
-Any dApp that looks for `window.solana` can connect. Each new origin still needs your approval.
+Any dApp that looks for `window.solana`, or uses Wallet Standard discovery (e.g. `@solana/wallet-adapter-react` with `wallets={[]}`; verified in `tests/browser-adapter.mjs`), can connect. Each new origin still needs your approval.
 
 ## 🔑 Permissions and why
 
