@@ -43,6 +43,9 @@ import {
   type PersistedConfig,
 } from "./wallet/store.js";
 
+import { askAssistant, type ChatMessage } from "./ai/assistant.js";
+import { buildSignedTransfer, clawdOverview, requestFaucet } from "./clawd/chain.js";
+
 // globalThis.Buffer is required by @solana/web3.js and bip39 in a bundled SW.
 (globalThis as unknown as { Buffer: typeof Buffer }).Buffer ||= Buffer;
 
@@ -777,6 +780,35 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
       if (!helmsmanApiUrl) throw new Error("API URL required");
       await saveConfig({ ...cfg, helmsmanApiUrl });
       return { helmsmanApiUrl };
+    }
+
+    // ---- Clawd Chain (local key; RPC/faucet are public endpoints) ----
+    case "popup_clawdOverview": {
+      const { address } = (req.params ?? {}) as { address?: string };
+      const target = address ?? cfg.selectedAccount ?? accountAddresses()[0];
+      if (!target) throw new Error("No account");
+      return clawdOverview(new PublicKey(target).toBase58());
+    }
+
+    case "popup_clawdFaucet": {
+      if (!unlocked) throw new Error("Wallet is locked");
+      const target = cfg.selectedAccount ?? accountAddresses()[0];
+      if (!target) throw new Error("No account");
+      return requestFaucet(target);
+    }
+
+    case "popup_clawdSign": {
+      if (!unlocked) throw new Error("Wallet is locked");
+      const { recipient, amount } = (req.params ?? {}) as { recipient?: string; amount?: string };
+      const from = cfg.selectedAccount ?? accountAddresses()[0];
+      const acct = from ? findKeypair(from) : undefined;
+      if (!acct) throw new Error("No account");
+      return buildSignedTransfer(acct.keypair, recipient ?? "", amount ?? "");
+    }
+
+    case "popup_aiChat": {
+      const { messages } = (req.params ?? {}) as { messages?: ChatMessage[] };
+      return askAssistant(Array.isArray(messages) ? messages : []);
     }
 
     default:

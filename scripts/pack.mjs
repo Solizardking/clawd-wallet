@@ -33,7 +33,7 @@ export function packExtensionZip({ build = false } = {}) {
   const packed = rpcUrl ? { apiUrl, rpcUrl } : { apiUrl };
   writeFileSync(join(dist, "config.json"), `${JSON.stringify(packed, null, 2)}\n`);
 
-  const files = walk(dist).filter((abs) => !abs.endsWith(".md")).map((abs) => ({
+  const files = walk(dist).filter((abs) => !abs.endsWith(".md") && !abs.endsWith(".DS_Store")).map((abs) => ({
     // manifest.json must sit at the zip root for the Chrome Web Store.
     name: relative(dist, abs).split("\\").join("/"),
     data: readFileSync(abs),

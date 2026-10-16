@@ -4,6 +4,11 @@ import type {
   PopupMethod,
   PopupState,
 } from "./protocol.js";
+// Type-only import: keeps Clawd runtime code (and its deps) out of a shared chunk.
+import type { ClawdOverview, ClawdSignedTransfer } from "./clawd/chain.js";
+
+const CLAWD_CLUSTER = "clawd";
+const CLAWD_NOTICE = "CLAWD has no monetary value. Clawd Chain is a public SVM test playground, not Solana mainnet.";
 
 const app = document.getElementById("app")!;
 const params = new URLSearchParams(location.search);
@@ -194,8 +199,9 @@ async function renderWallet(state: PopupState) {
     const row = el("div", { class: `acct ${isSelected ? "selected" : ""}` });
     const label = el("code", { title: address }, [short(address)]);
     const bal = el("span", { class: "muted bal" }, ["…"]);
+    const unit = state.selectedNetwork.cluster === CLAWD_CLUSTER ? "CLAWD" : "SOL";
     void rpc<{ sol: number }>("popup_getBalance", { address })
-      .then((b) => (bal.textContent = `${b.sol.toFixed(4)} SOL`))
+      .then((b) => (bal.textContent = `${b.sol.toFixed(4)} ${unit}`))
       .catch(() => (bal.textContent = "—"));
     const copy = el("button", { class: "ghost sm" }, ["Copy"]);
     copy.addEventListener("click", () => navigator.clipboard.writeText(address));
@@ -217,6 +223,10 @@ async function renderWallet(state: PopupState) {
   });
   list.append(add);
   app.append(list);
+
+  if (state.selectedNetwork.cluster === CLAWD_CLUSTER) app.append(renderClawd(state));
+
+  app.append(renderAssistant());
 
   // Send SOL
   const to = el("input", { placeholder: "Recipient address" }) as HTMLInputElement;
@@ -367,3 +377,96 @@ chrome.runtime.onMessage?.addListener((msg) => {
 });
 
 export type { Network };
+
+// ---- Clawd Chain panel (ported from clawd-chain extension popup) ----
+function renderClawd(state: PopupState): HTMLElement {
+  const card = el("div", { class: "card" }, [el("h2", {}, ["Clawd Chain"])]);
+  card.append(el("div", { class: "banner" }, [CLAWD_NOTICE]));
+  const shield = el("p", { class: "muted" }, [""]);
+  card.append(shield);
+  const balance = el("div", {}, ["Balance: …"]);
+  const addr = el("a", { target: "_blank", rel: "noopener" }, [state.selectedAccount ?? ""]) as HTMLAnchorElement;
+  const holdings = el("pre", { class: "muted" }, [""]);
+  card.append(balance, el("code", { class: "block" }, [addr]), holdings);
+  const refresh = () =>
+    rpc<ClawdOverview>("popup_clawdOverview")
+      .then((o) => {
+        balance.textContent = `Balance: ${o.clawd} CLAWD`;
+        shield.textContent = o.shieldReset;
+        addr.href = o.explorerUrl;
+        addr.textContent = o.address;
+        holdings.textContent = o.holdings.length
+          ? o.holdings.map((h) => `${h.name || "Unnamed"} · ${h.balance}`).join("\n")
+          : "No tokens yet";
+      })
+      .catch((e) => (balance.textContent = `Balance: ${(e as Error).message}`));
+  void refresh();
+
+  const status = el("div", { class: "muted" }, [""]);
+  const pinch = el("button", { class: "primary" }, ["Get CLAWD (faucet)"]) as HTMLButtonElement;
+  pinch.addEventListener("click", async () => {
+    pinch.disabled = true;
+    status.textContent = "Mining proof of work…";
+    try {
+      const drop = await rpc<{ amount?: unknown }>("popup_clawdFaucet");
+      status.textContent = drop.amount != null ? `+${String(drop.amount)} CLAWD` : "Airdrop sent";
+      await refresh();
+    } catch (e) {
+      status.textContent = (e as Error).message;
+    } finally {
+      pinch.disabled = false;
+    }
+  });
+  card.append(el("p", { class: "muted" }, ["Faucet: proof of work solved in your browser, 5 CLAWD per wallet per day."]), pinch, status);
+
+  const to = el("input", { placeholder: "Recipient address" }) as HTMLInputElement;
+  const amt = el("input", { type: "number", step: "0.000000001", placeholder: "Amount (CLAWD)" }) as HTMLInputElement;
+  const sign = el("button", { class: "ghost" }, ["Sign (offline, not broadcast)"]);
+  const signed = el("code", { class: "block" }, [""]);
+  sign.addEventListener("click", async () => {
+    try {
+      const s = await rpc<ClawdSignedTransfer>("popup_clawdSign", { recipient: to.value, amount: amt.value });
+      signed.textContent = `${s.sender} → ${s.recipient} · ${s.amount} CLAWD\nsig ${s.signature}`;
+    } catch (e) {
+      signed.textContent = (e as Error).message;
+    }
+  });
+  card.append(el("h2", {}, ["Sign transfer intent"]), to, amt, sign, signed);
+  return card;
+}
+
+// ---- AI assistant (OpenRouter via the musebook-proxy worker; no key in the extension) ----
+const chatHistory: { role: "user" | "assistant"; content: string }[] = [];
+function renderAssistant(): HTMLElement {
+  const log = el("pre", { class: "muted" }, [""]);
+  const paint = () =>
+    (log.textContent = chatHistory.map((m) => `${m.role === "user" ? "You" : "Clawd"}: ${m.content}`).join("\n\n"));
+  paint();
+  const input = el("input", { placeholder: "Ask Clawd…" }) as HTMLInputElement;
+  const ask = el("button", { class: "ghost" }, ["Ask"]) as HTMLButtonElement;
+  ask.addEventListener("click", async () => {
+    const q = input.value.trim();
+    if (!q) return;
+    chatHistory.push({ role: "user", content: q });
+    input.value = "";
+    ask.disabled = true;
+    paint();
+    try {
+      const { reply } = await rpc<{ reply: string }>("popup_aiChat", { messages: chatHistory });
+      chatHistory.push({ role: "assistant", content: reply });
+    } catch (e) {
+      chatHistory.pop();
+      showError((e as Error).message);
+    } finally {
+      ask.disabled = false;
+      paint();
+    }
+  });
+  return el("div", { class: "card" }, [
+    el("h2", {}, ["Assistant"]),
+    el("p", { class: "muted" }, ["AI help. Never share your recovery phrase. It cannot sign or send anything."]),
+    log,
+    input,
+    ask,
+  ]);
+}

@@ -1,6 +1,6 @@
 {
   "name": "@helmsman/extension",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,9 +9,10 @@
     "pack": "node ./scripts/pack.mjs --build",
     "typecheck": "tsc --noEmit",
     "test:keyring": "tsx src/wallet/keyring.vectors.ts",
+    "test:clawd": "tsx src/clawd/clawd.vectors.ts",
     "store": "node ./scripts/pack.mjs --build",
     "test:security": "npm run build && node --test tests/security.test.mjs",
-    "test": "npm run test:security && npm run test:keyring",
+    "test": "npm run test:security && npm run test:keyring && npm run test:clawd",
     "test:browser": "npm run build && node tests/browser-consent.mjs",
     "box:launch": "node ./scripts/launch-chromium.mjs",
     "box:verify": "npm run build && node ./scripts/launch-chromium.mjs --verify"

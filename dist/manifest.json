@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clawd Wallet",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Solana wallet for Clawd & SolGPT. Every connection, signature and transfer needs your explicit approval. Keys stay on your device.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -48,7 +48,11 @@
   ],
   "host_permissions": [
     "https://*/*",
-    "http://*/*"
+    "http://*/*",
+    "https://rpc.clawdchain.trade/*",
+    "https://faucet.clawdchain.trade/*",
+    "https://api.clawdchain.trade/*",
+    "https://musebook-proxy.mynameisjeffspicoli.workers.dev/*"
   ],
   "permissions": [
     "storage"

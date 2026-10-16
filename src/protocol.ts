@@ -42,6 +42,8 @@ export const AVAILABLE_NETWORKS: Network[] = [
   },
   { title: "Devnet", cluster: "devnet", endpoint: "https://api.devnet.solana.com" },
   { title: "Testnet", cluster: "testnet", endpoint: "https://api.testnet.solana.com" },
+  // Clawd Chain: separate SVM test chain (own genesis), native coin CLAWD (no monetary value).
+  { title: "Clawd Chain", cluster: "clawd", endpoint: "https://rpc.clawdchain.trade" },
 ];
 
 /** User-owned HTTPS JSON-RPC; endpoint comes from PersistedConfig.customRpcUrl. */
@@ -90,7 +92,13 @@ export type PopupMethod =
   | "popup_deleteAuthorizedOrigin"
   | "popup_setAgentMode"
   | "popup_setHelmsmanApi"
-  | "popup_setCustomRpc";
+  | "popup_setCustomRpc"
+  // Clawd Chain
+  | "popup_clawdOverview"
+  | "popup_clawdFaucet"
+  | "popup_clawdSign"
+  // AI assistant (via musebook-proxy worker)
+  | "popup_aiChat";
 
 export type PopupRequest = {
   type: "popup:request";
