@@ -10,7 +10,24 @@ const SYSTEM =
   "Be concise. Never ask for seed phrases, private keys or passwords. You cannot execute transactions; " +
   "every connection, signature and transfer needs the user's approval in the wallet. CLAWD on Clawd Chain has no monetary value.";
 
-export async function askAssistant(history: ChatMessage[]): Promise<{ reply: string; model?: string }> {
+const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * True if text contains one of the wallet's secrets (recovery phrase, seed) or
+ * something shaped like a raw Solana secret key (64-byte base58 / byte array).
+ */
+export function containsSecret(text: string, secrets: string[] = []): boolean {
+  const t = norm(text);
+  for (const s of secrets) if (s && s.length >= 8 && t.includes(norm(s))) return true;
+  if (/\b[1-9A-HJ-NP-Za-km-z]{86,90}\b/.test(text)) return true; // base58 64-byte key
+  if (/\[\s*(\d{1,3}\s*,\s*){63}\d{1,3}\s*\]/.test(text)) return true; // JSON keypair array
+  return false;
+}
+
+export async function askAssistant(history: ChatMessage[], secrets: string[] = []): Promise<{ reply: string; model?: string }> {
+  if (history.some((m) => typeof m?.content === "string" && containsSecret(m.content, secrets))) {
+    throw new Error("Not sent: your message looks like it contains a recovery phrase or private key. Never share it, not even with Clawd.");
+  }
   const messages = history
     .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-20)

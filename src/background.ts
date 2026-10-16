@@ -151,10 +151,17 @@ async function rebuildAccounts(seedHex: string): Promise<DerivedAccount[]> {
 
 // ---- Event broadcasting to dapps ----
 
-async function broadcast(event: ProviderEvent, data: unknown): Promise<void> {
+async function broadcast(event: ProviderEvent, data: unknown, onlyOrigin?: string): Promise<void> {
+  // Privacy: events (accounts, cluster, lock state) only reach tabs whose
+  // origin the user approved. Unconnected sites learn nothing.
+  const { authorizedOrigins } = await loadConfig();
+  const allowed = onlyOrigin ? [onlyOrigin] : authorizedOrigins;
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
-    if (tab.id === undefined) continue;
+    if (tab.id === undefined || !tab.url) continue;
+    let origin: string;
+    try { origin = new URL(tab.url).origin; } catch { continue; }
+    if (!allowed.includes(origin)) continue;
     chrome.tabs.sendMessage(tab.id, { type: "solana:event", event, data }).catch(() => {});
   }
 }
@@ -372,10 +379,21 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
   const cfg = await loadConfig();
   switch (req.method) {
     case "wallet_getState":
+      // Unconnected sites cannot learn whether the wallet is set up or unlocked.
+      if (!cfg.authorizedOrigins.includes(origin)) return { state: "unknown" };
       return { state: await walletState() };
 
     case "wallet_getCluster":
-      return cfg.selectedNetwork;
+      if (!cfg.authorizedOrigins.includes(origin)) throw { code: 4100, message: "Unauthorized. Connect first." };
+      return { title: cfg.selectedNetwork.title, cluster: cfg.selectedNetwork.cluster };
+
+    case "wallet_disconnect": {
+      if (cfg.authorizedOrigins.includes(origin)) {
+        await saveConfig({ ...cfg, authorizedOrigins: cfg.authorizedOrigins.filter((o) => o !== origin) });
+        await broadcast("disconnected", null, origin);
+      }
+      return { ok: true };
+    }
 
     case "wallet_requestAccounts": {
       if (!unlocked) throw { code: 4100, message: "Wallet is locked. Unlock it in the wallet popup first." };
@@ -461,6 +479,8 @@ async function handleProviderRequest(req: ProviderRequest, origin: string, tabId
     }
 
     case "wallet_getBalance": {
+      // No page-triggered RPC traffic before the user connects this origin.
+      if (!cfg.authorizedOrigins.includes(origin)) throw { code: 4100, message: "Unauthorized. Connect first." };
       const params = (req.params ?? {}) as { address?: string };
       const target = params.address ?? cfg.selectedAccount;
       if (!target) throw { code: -32602, message: "No account" };
@@ -702,7 +722,7 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
       }
       if (!network) throw new Error("Unknown network");
       await saveConfig({ ...cfg, selectedNetwork: network });
-      await broadcast("clusterChanged", network as Network);
+      await broadcast("clusterChanged", { title: (network as Network).title, cluster: (network as Network).cluster });
       return { selectedNetwork: network };
     }
 
@@ -719,7 +739,7 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
         selectedNetwork: select === false ? cfg.selectedNetwork : network,
       };
       await saveConfig(next);
-      if (select !== false) await broadcast("clusterChanged", network as Network);
+      if (select !== false) await broadcast("clusterChanged", { title: (network as Network).title, cluster: (network as Network).cluster });
       return { customRpcUrl: url, selectedNetwork: next.selectedNetwork };
     }
 
@@ -771,6 +791,7 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
         ...cfg,
         authorizedOrigins: cfg.authorizedOrigins.filter((o) => o !== origin),
       });
+      if (origin) await broadcast("disconnected", null, origin);
       return { authorizedOrigins: (await loadConfig()).authorizedOrigins };
     }
 
@@ -808,7 +829,10 @@ async function handlePopupRequest(req: PopupRequest): Promise<unknown> {
 
     case "popup_aiChat": {
       const { messages } = (req.params ?? {}) as { messages?: ChatMessage[] };
-      return askAssistant(Array.isArray(messages) ? messages : []);
+      // The assistant always stays available. It only receives the chat text the
+      // user typed; secrets held by the unlocked wallet are refused locally.
+      const secrets = unlocked ? [unlocked.mnemonic, unlocked.seedHex] : [];
+      return askAssistant(Array.isArray(messages) ? messages : [], secrets);
     }
 
     default:

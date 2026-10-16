@@ -24,7 +24,9 @@ export type WalletMethod =
   | "wallet_signAndSendTransaction"
   | "wallet_signTransactionB64"
   | "wallet_sendSol"
-  | "wallet_getBalance";
+  | "wallet_getBalance"
+  // Wallet Standard standard:disconnect: revokes this origin's permission.
+  | "wallet_disconnect";
 
 export type WalletState = "locked" | "unlocked" | "uninitialized";
 

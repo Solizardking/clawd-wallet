@@ -3,7 +3,7 @@
 <img src="docs/assets/banner.svg" alt="Clawd Wallet — Solana wallet for agents, consent on every signature" width="100%"/>
 
 <p>
-  <a href="https://github.com/Solizardking/clawd-wallet/pulls"><img alt="version" src="https://img.shields.io/badge/version-0.3.2-9945FF?style=for-the-badge&labelColor=0B0B14"/></a>
+  <a href="https://github.com/Solizardking/clawd-wallet/pulls"><img alt="version" src="https://img.shields.io/badge/version-0.4.2-9945FF?style=for-the-badge&labelColor=0B0B14"/></a>
   <img alt="Manifest V3" src="https://img.shields.io/badge/Chrome-Manifest%20V3-14F195?style=for-the-badge&logo=googlechrome&logoColor=14F195&labelColor=0B0B14"/>
   <img alt="Solana" src="https://img.shields.io/badge/Solana-window.solana-9945FF?style=for-the-badge&logo=solana&logoColor=white&labelColor=0B0B14"/>
   <img alt="Consent" src="https://img.shields.io/badge/consent-every%20connect%20%C2%B7%20sign%20%C2%B7%20send-14F195?style=for-the-badge&labelColor=0B0B14"/>
@@ -47,6 +47,9 @@
 | Feature | Details |
 | --- | --- |
 | 🦞 **`window.solana` provider** | `connect`, `signMessage` (string or UTF-8 bytes), `signTransaction` and `signAndSendTransaction` (base64-serialized transactions) for dApps. |
+| 🧩 **Wallet Standard** | Registers as **Clawd Wallet** for any dApp using `@wallet-standard/app` / Solana wallet-adapter: `standard:connect` (incl. `silent`), `standard:disconnect`, `standard:events`, `solana:signTransaction`, `solana:signAndSendTransaction`, `solana:signMessage`, `solana:signIn`. Chains: `solana:mainnet`, `solana:devnet`, `solana:testnet`. Clawd Chain has no standard chain id and is not advertised. Every call goes through the same approval popup. |
+| 🕶️ **Private by default** | Sites see zero accounts, no lock state, network or balance until you approve them; wallet events only reach approved sites; *Connected sites* in the popup revokes access (the site gets `disconnected`). No telemetry, no version string, no web-accessible files to probe, no page globals beyond `window.solana`/`window.clawd`/`window.helmsman`. Never claims to be Phantom. |
+| 🤖 **Clawd AI assistant** | Built-in chat via the musebook-proxy (OpenRouter). It only receives what you type; messages that contain your recovery phrase, seed or a private key are refused locally and never sent. |
 | 🛡️ **Consent on everything** | New site connections, message signing, transaction signing and SOL transfers each open an approval window. Auto-approve is off, and old agent-mode settings are ignored. |
 | 🔐 **Self-custodial vault** | BIP39 seed created on your device, encrypted with PBKDF2-SHA256 (600k) → AES-256-GCM in local extension storage. |
 | 🌐 **Network + RPC control** | Mainnet / devnet / testnet, or your own RPC URL from the popup. |
@@ -100,7 +103,7 @@ Web pages can't call the popup's own commands (`popup_*`). A forged request from
 5. Pin **Clawd Wallet** from the puzzle-piece menu.
 
 > [!NOTE]
-> v0.3.2 is not on the Chrome Web Store and has no GitHub release yet. The published v0.3.0 release came before the consent fix.
+> v0.4.2 is not on the Chrome Web Store and has no GitHub release yet. The published v0.3.0 release came before the consent fix.
 
 ### Clone and build
 
@@ -162,7 +165,7 @@ Any dApp that looks for `window.solana` can connect. Each new origin still needs
 | --- | --- |
 | `storage` | Saves your encrypted vault, accounts, network and settings locally on your device. |
 | Content script on `http://*/*`, `https://*/*` | Injects the `window.solana` provider so dApps can detect and connect to the wallet. |
-| `injected.js` web-accessible resource | The provider script that's injected into the page. |
+| Main-world content script `injected.js` (`document_start`) | Registers the Wallet Standard wallet and `window.solana` before page scripts run. It is not web-accessible, so pages cannot probe for it. |
 | Host permissions `https://*/*`, `http://*/*` | Lets the wallet talk to the Solana RPC you choose. Legacy backend payment/signing relays are disabled. |
 
 ## 🗂️ Project layout

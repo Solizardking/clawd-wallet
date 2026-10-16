@@ -1,6 +1,12 @@
 {
-  "checkedAt": "2026-10-12T16:34:58.376Z",
-  "version": "0.3.2",
+  "checkedAt": "2026-10-16T17:00:30.518Z",
+  "version": "0.4.2",
+  "walletStandard": {
+    "discoveredByGetWallets": true,
+    "silentConnectApprovedOrigin": true,
+    "signMessageNeedsApproval": true,
+    "unconnectedOriginSeesNoAccounts": true
+  },
   "profile": "disposable and removed",
   "installedInUserProfile": false,
   "normalConnectionApproval": true,

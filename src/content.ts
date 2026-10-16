@@ -6,15 +6,14 @@ const SOLANA_REQUEST_CHANNEL = "helmsman-solana";
 const SOLANA_REPLY_CHANNEL = "helmsman-solana-reply";
 const SOLANA_EVENT_CHANNEL = "helmsman-solana-event";
 
-// Inject the in-page provider script into the page context.
-const script = document.createElement("script");
-script.src = chrome.runtime.getURL("injected.js");
-script.type = "module";
-(document.head || document.documentElement).appendChild(script);
+// The in-page provider (injected.js) is declared in manifest.json as a
+// MAIN-world content script at document_start, so it runs before any page
+// script and is not exposed as a web-accessible (probeable) resource.
 
 // Only the Solana provider channel can reach background commands.
 window.addEventListener("message", (event) => {
-  if (event.source !== window) return;
+  // Only same-window, same-origin messages (never other frames/windows).
+  if (event.source !== window || event.origin !== window.location.origin) return;
   const data = event.data;
   if (!data) return;
 
@@ -23,13 +22,13 @@ window.addEventListener("message", (event) => {
       channel: HELMSMAN_REPLY_CHANNEL,
       id: data.id,
       error: { code: 4200, message: "Legacy backend commands are disabled until a secure per-request consent flow is implemented. Use the Solana provider for wallet requests." },
-    }, "*");
+    }, window.location.origin);
     return;
   }
 
   if (data.channel === SOLANA_REQUEST_CHANNEL) {
     chrome.runtime.sendMessage(
-      { type: "solana:request", id: data.id, method: data.method, params: data.params },
+      { type: "solana:request", id: String(data.id), method: String(data.method), params: data.params },
       (response) => {
         const err = chrome.runtime.lastError;
         window.postMessage(
@@ -39,7 +38,7 @@ window.addEventListener("message", (event) => {
             result: response?.result,
             error: err ? { message: err.message } : response?.error,
           },
-          "*",
+          window.location.origin,
         );
       },
     );
@@ -52,7 +51,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "solana:event") {
     window.postMessage(
       { channel: SOLANA_EVENT_CHANNEL, event: msg.event, data: msg.data },
-      "*",
+      window.location.origin,
     );
   }
 });

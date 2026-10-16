@@ -20,7 +20,7 @@ const popupSender = { id: extensionId, url: `${extensionOrigin}/popup.html?view=
 const sources = Object.fromEntries(await Promise.all(['background', 'content', 'injected'].map(async name => [name, await readFile(new URL(`../dist/${name}.js`, import.meta.url), 'utf8')])));
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function background({ authorized = true, locked = false, popupFails = false } = {}) {
+function background({ authorized = true, locked = false, popupFails = false, tabs = [], ai } = {}) {
   const local = {
     'helmsman:vault': { fixture: true },
     'helmsman:config': { accountCount: 1, selectedAccount: account, authorizedOrigins: authorized ? [webSender.origin] : [], agentMode: true, customRpcUrl: 'https://rpc.example', helmsmanApiUrl: 'https://backend.example' },
@@ -32,26 +32,28 @@ function background({ authorized = true, locked = false, popupFails = false } = 
     async remove(key) { delete entries[key]; },
   });
   let listener;
-  const network = [], captures = [], popups = [];
+  const network = [], captures = [], popups = [], tabMessages = [], bodies = [];
   const chrome = {
     runtime: { id: extensionId, getURL: path => `${extensionOrigin}/${path}`, onMessage: { addListener(fn) { listener = fn; } } },
     storage: { local: storage(local), session: storage(session) },
-    tabs: { async query() { return []; }, async sendMessage() {}, async captureVisibleTab(...args) { captures.push(args); throw new Error('Screenshot must not be captured'); } },
+    tabs: { async query() { return tabs; }, async sendMessage(id, msg) { tabMessages.push({ id, ...msg }); }, async captureVisibleTab(...args) { captures.push(args); throw new Error('Screenshot must not be captured'); } },
     windows: {
       async create(details) { popups.push(details); if (popupFails) throw new Error('Cannot open'); return { id: 42 }; },
       async get() { return { id: 42 }; }, async update() {}, onRemoved: { addListener() {} },
     },
   };
   const context = vm.createContext({ chrome, crypto: webcrypto, Buffer, Uint8Array, ArrayBuffer, TextEncoder, TextDecoder, URL, Headers, Request, Response, AbortController, atob, btoa, setTimeout, clearTimeout, console,
-    async fetch(url) {
+    async fetch(url, init) {
       if (String(url) === `${extensionOrigin}/config.json`) return Response.json({ apiUrl: 'https://backend.example' });
-      network.push(String(url)); throw new Error('External requests are forbidden in security tests');
+      network.push(String(url)); bodies.push(init?.body);
+      if (ai && String(url).includes('/api/wallet-chat')) return Response.json({ choices: [{ message: { content: ai } }], model: 'fixture' });
+      throw new Error('External requests are forbidden in security tests');
     },
   });
   vm.runInContext(sources.background, context, { filename: 'dist/background.js' });
   const send = (msg, sender = webSender) => new Promise(resolve => listener(msg, sender, result => resolve(plain(result))));
   const popup = (method, params) => send({ type: 'popup:request', method, params }, popupSender);
-  return { send, popup, local, network, captures, popups };
+  return { send, popup, local, network, captures, popups, tabMessages, bodies };
 }
 
 async function pending(harness) {
@@ -72,11 +74,12 @@ function page(entry) {
     removeEventListener(name, fn) { listeners.get(name)?.delete(fn); },
     dispatchEvent() {},
     postMessage(msg) { messages.push(msg); },
+    location: { origin: 'https://dapp.example', host: 'dapp.example' },
   };
-  const emit = (data, source = window) => { for (const fn of listeners.get('message') ?? []) fn({ source, data }); };
+  const emit = (data, source = window, origin = 'https://dapp.example') => { for (const fn of listeners.get('message') ?? []) fn({ source, origin, data }); };
   const chrome = { runtime: { getURL: path => `${extensionOrigin}/${path}`, sendMessage(msg, callback) { calls.push(msg); callback({ result: { state: 'locked' } }); }, onMessage: { addListener() {} } } };
   const document = { createElement() { return {}; }, head: { appendChild() {} } };
-  vm.runInContext(sources[entry], vm.createContext({ window, document, chrome, crypto: webcrypto, Event, URL, console }), { filename: `dist/${entry}.js` });
+  vm.runInContext(sources[entry], vm.createContext({ window, document, chrome, crypto: webcrypto, Event, URL, console, TextEncoder, TextDecoder, atob, btoa }), { filename: `dist/${entry}.js` });
   return { window, emit, messages, calls, originalFetch };
 }
 
@@ -263,4 +266,71 @@ test('malformed approved transaction rejects cleanly and removes its pending act
   await h.popup('popup_approveAction', { id: action.id });
   assert.match((await response).error.message, /base58|Non-base58/);
   assert.equal((await h.popup('popup_listActions')).result.pendingActions.length, 0);
+});
+
+// ---- Privacy ("stealth") and assistant guarantees ----
+const otherTab = { id: 7, url: 'https://other.example/' }, dappTab = { id: 1, url: 'https://dapp.example/trade' };
+
+test('unconnected sites learn nothing: no state, cluster, balance or RPC before connect', async () => {
+  const h = background({ authorized: false });
+  assert.equal((await h.send({ type: 'solana:request', method: 'wallet_getState' })).result.state, 'unknown');
+  assert.equal((await h.send({ type: 'solana:request', method: 'wallet_getCluster' })).error.code, 4100);
+  assert.equal((await h.send({ type: 'solana:request', method: 'wallet_getBalance', params: { address: account } })).error.code, 4100);
+  assert.equal((await h.send({ type: 'solana:request', method: 'wallet_requestAccounts', params: { promptAuthorization: false } })).error.code, 4100);
+  assert.equal(h.network.length, 0); assert.equal(h.popups.length, 0);
+});
+
+test('connected site sees cluster without RPC endpoint (custom RPC URL is not leaked)', async () => {
+  const h = background();
+  const cluster = (await h.send({ type: 'solana:request', method: 'wallet_getCluster' })).result;
+  assert.deepEqual(Object.keys(cluster).sort(), ['cluster', 'title']);
+});
+
+test('account events reach only approved origins', async () => {
+  const h = background({ authorized: false, tabs: [dappTab, otherTab] });
+  const response = h.send({ type: 'solana:request', method: 'wallet_requestAccounts' });
+  const action = await pending(h);
+  await h.popup('popup_approveAction', { id: action.id });
+  await response; await tick();
+  assert.ok(h.tabMessages.some(m => m.id === 1 && m.event === 'accountsChanged'));
+  assert.ok(!h.tabMessages.some(m => m.id === 7), 'unconnected tab must not receive wallet events');
+  await h.popup('popup_changeNetwork', { cluster: 'devnet' }); await tick();
+  const cc = h.tabMessages.find(m => m.event === 'clusterChanged');
+  assert.equal(cc.id, 1); assert.equal(cc.data.endpoint, undefined);
+});
+
+test('standard:disconnect (wallet_disconnect) revokes only the calling origin', async () => {
+  const h = background({ tabs: [dappTab, otherTab] });
+  assert.ok((await h.send({ type: 'solana:request', method: 'wallet_disconnect' })).result.ok);
+  assert.deepEqual(h.local['helmsman:config'].authorizedOrigins, []);
+  await tick();
+  assert.deepEqual(h.tabMessages.map(m => [m.id, m.event]), [[1, 'disconnected']]);
+  assert.equal((await h.send({ type: 'solana:request', method: 'wallet_signMessage', params: { message: 'x' } })).error.code, 4100);
+});
+
+test('revoking a site in the popup notifies that site it was disconnected', async () => {
+  const h = background({ tabs: [dappTab, otherTab] });
+  await h.popup('popup_deleteAuthorizedOrigin', { origin: webSender.origin }); await tick();
+  assert.deepEqual(h.tabMessages.map(m => [m.id, m.event]), [[1, 'disconnected']]);
+});
+
+test('AI assistant stays available and sends only the typed chat (no keys, no wallet context)', async () => {
+  const h = background({ ai: 'hi from clawd' });
+  const r = await h.popup('popup_aiChat', { messages: [{ role: 'user', content: 'what is a priority fee?' }] });
+  assert.equal(r.result.reply, 'hi from clawd');
+  assert.equal(h.network.length, 1); assert.match(h.network[0], /\/api\/wallet-chat$/);
+  const body = JSON.parse(h.bodies[0]);
+  assert.deepEqual(body.messages.map(m => m.role), ['system', 'user']);
+  assert.equal(body.messages[1].content, 'what is a priority fee?');
+  for (const leak of [seedHex, account, 'public fixture']) assert.ok(!h.bodies[0].includes(leak), `leaked ${leak}`);
+});
+
+test('AI assistant refuses locally to send a recovery phrase, seed or secret key', async () => {
+  const h = background({ ai: 'never' });
+  const secretKey = bs58.encode(nacl.sign.keyPair().secretKey);
+  for (const content of [`my seed ${seedHex}`, 'PUBLIC   Fixture', `key ${secretKey}`, `[${Array(64).fill(1).join(',')}]`]) {
+    const r = await h.popup('popup_aiChat', { messages: [{ role: 'user', content }] });
+    assert.match(r.error.message, /recovery phrase or private key/);
+  }
+  assert.equal(h.network.length, 0);
 });

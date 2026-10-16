@@ -13,7 +13,10 @@ const seedHex = '55830e41db976a04df5775aeebf7751b3f599bec8f9d56568092b467aa64dad
 const artifacts = resolve('docs/verification');
 const profile = await mkdtemp(join(tmpdir(), 'clawd-wallet-consent-test-'));
 let paymentRequests = 0;
+// Public @wallet-standard/app (Apache-2.0) served to the fixture page as an ES module.
+const walletStandardApp = await (await import('node:fs/promises')).readFile(resolve('node_modules/@wallet-standard/app/lib/esm/wallets.js'), 'utf8');
 const server = createServer((request, response) => {
+  if (request.url === '/wallet-standard-app.js') { response.writeHead(200, { 'content-type': 'text/javascript' }); response.end(walletStandardApp); return; }
   if (request.url === '/payment-required') { paymentRequests++; response.writeHead(402); response.end('Payment required'); return; }
   response.writeHead(200, { 'content-type': 'text/html' });
   response.end('<!doctype html><title>Public wallet consent fixture</title><h1>Wallet consent test</h1>');
@@ -109,9 +112,51 @@ try {
   await page.waitForFunction(() => globalThis.walletTestResult !== null);
   const signed = (await page.evaluate(() => globalThis.walletTestResult)).result;
   assert.equal(nacl.sign.detached.verify(new TextEncoder().encode('public test message'), bs58.decode(signed.signature), bs58.decode(account)), true);
+  // Wallet Standard: a dApp using @wallet-standard/app getWallets() discovers Clawd Wallet.
+  const discovered = await page.evaluate(async () => {
+    const { getWallets } = await import('/wallet-standard-app.js');
+    const wallet = getWallets().get().find(w => w.name === 'Clawd Wallet');
+    globalThis.clawdStandard = wallet;
+    return wallet && { name: wallet.name, chains: [...wallet.chains], features: Object.keys(wallet.features).sort(), accountsBeforeConnect: wallet.accounts.length, icon: wallet.icon.slice(0, 22) };
+  });
+  assert.equal(discovered.name, 'Clawd Wallet');
+  assert.deepEqual(discovered.chains, ['solana:mainnet', 'solana:devnet', 'solana:testnet']);
+  assert.equal(discovered.accountsBeforeConnect, 0);
+  assert.equal(discovered.icon, 'data:image/png;base64,');
+  // This origin was approved above, so a silent standard:connect succeeds without a popup.
+  const stdAccounts = await page.evaluate(async () => (await globalThis.clawdStandard.features['standard:connect'].connect({ silent: true })).accounts.map(a => a.address));
+  assert.deepEqual(stdAccounts, [account]);
+  const stdOpened = context.waitForEvent('page', { timeout: 15000 });
+  await page.evaluate(() => {
+    globalThis.walletTestResult = null;
+    const w = globalThis.clawdStandard;
+    w.features['solana:signMessage'].signMessage({ account: w.accounts[0], message: new TextEncoder().encode('wallet standard test') })
+      .then(([r]) => { globalThis.walletTestResult = { signature: [...r.signature] }; }, e => { globalThis.walletTestResult = { error: e.message }; });
+  });
+  const stdPopup = await stdOpened;
+  await stdPopup.getByRole('button', { name: 'Approve', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => globalThis.walletTestResult), null, 'standard signMessage must wait for approval');
+  await stdPopup.screenshot({ path: join(artifacts, 'wallet-standard-approval.png') });
+  await stdPopup.getByRole('button', { name: 'Approve', exact: true }).click();
+  await page.waitForFunction(() => globalThis.walletTestResult !== null);
+  const stdSig = await page.evaluate(() => globalThis.walletTestResult);
+  assert.equal(nacl.sign.detached.verify(new TextEncoder().encode('wallet standard test'), Uint8Array.from(stdSig.signature), bs58.decode(account)), true);
+  // Fresh unconnected origin: wallet discoverable, zero accounts, silent connect refused.
+  const other = await context.newPage();
+  await other.goto(origin.replace('127.0.0.1', 'localhost'));
+  const strangers = await other.evaluate(async () => {
+    const { getWallets } = await import('/wallet-standard-app.js');
+    const w = getWallets().get().find(x => x.name === 'Clawd Wallet');
+    let silent; try { await w.features['standard:connect'].connect({ silent: true }); silent = 'connected'; } catch (e) { silent = e.message; }
+    return { found: !!w, accounts: w.accounts.length, silent, state: await window.solana.getState(), version: window.clawd.version };
+  });
+  assert.deepEqual(strangers, { found: true, accounts: 0, silent: strangers.silent, state: { state: 'unknown' }, version: undefined });
+  assert.match(strangers.silent, /Unauthorized/);
+  await other.close();
+  const walletStandard = { discoveredByGetWallets: true, silentConnectApprovedOrigin: true, signMessageNeedsApproval: true, unconnectedOriginSeesNoAccounts: true };
   const effects = await worker.evaluate(() => ({ captures: globalThis.securityTest.captures, legacyBackendCalls: globalThis.securityTest.legacyBackendCalls }));
   assert.deepEqual(effects, { captures: 0, legacyBackendCalls: 0 });
-  const report = { checkedAt: new Date().toISOString(), version: '0.3.2', profile: 'disposable and removed', installedInUserProfile: false, normalConnectionApproval: true, signingApprovalAndRejection: true, fixtureSignatureVerified: true, legacyCommandsBlocked: true, http402Preserved: true, ...effects, fundedTransactions: false };
+  const report = { checkedAt: new Date().toISOString(), version: '0.4.2', walletStandard, profile: 'disposable and removed', installedInUserProfile: false, normalConnectionApproval: true, signingApprovalAndRejection: true, fixtureSignatureVerified: true, legacyCommandsBlocked: true, http402Preserved: true, ...effects, fundedTransactions: false };
   await writeFile(join(artifacts, 'browser-consent.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } finally {

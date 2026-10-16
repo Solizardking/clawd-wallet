@@ -1,4 +1,6 @@
 import type { ProviderEvent, WalletMethod } from "./protocol.js";
+import { registerWallet } from "@wallet-standard/wallet";
+import { ClawdStandardWallet } from "./wallet-standard.js";
 
 // Channel names are inlined (kept in sync with src/protocol.ts) so this injected
 // module stays self-contained with no shared Rollup chunk.
@@ -16,14 +18,14 @@ function request(channel: string, replyChannel: string, payload: object): Promis
   const id = crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const onMsg = (event: MessageEvent<Reply>) => {
-      if (event.source !== window) return;
+      if (event.source !== window || event.origin !== window.location.origin) return;
       if (event.data?.channel !== replyChannel || event.data.id !== id) return;
       window.removeEventListener("message", onMsg);
       if (event.data.error) reject(new Error(event.data.error.message));
       else resolve(event.data.result);
     };
     window.addEventListener("message", onMsg);
-    window.postMessage({ channel, id, ...payload }, "*");
+    window.postMessage({ channel, id, ...payload }, window.location.origin);
   });
 }
 
@@ -43,10 +45,11 @@ class SolanaProvider {
 
   constructor() {
     window.addEventListener("message", (event: MessageEvent) => {
-      if (event.source !== window) return;
+      if (event.source !== window || event.origin !== window.location.origin) return;
       const data = event.data;
       if (!data || data.channel !== SOLANA_EVENT_CHANNEL) return;
       const event_ = data.event as ProviderEvent;
+      if (event_ === "disconnected") this.publicKey = null;
       if (event_ === "accountsChanged") {
         const accounts = (data.data as string[]) ?? [];
         this.publicKey = accounts[0] ?? null;
@@ -174,7 +177,7 @@ function legacyDisabled(): never {
 // wallet approval. Legacy backend relays remain disabled.
 const clawd = {
   name: "Clawd",
-  version: "0.3.2",
+  // No version/settings/network fields: they would make the wallet fingerprintable.
   native: "solana",
   isClawd: true,
   isHelmsman: true, // backward compatible
@@ -228,3 +231,11 @@ window.dispatchEvent(new Event("clawd#initialized"));
 window.dispatchEvent(new Event("helmsman#initialized"));
 
 // HTTP 402 responses remain untouched. Payments need an explicit consent flow.
+
+// ---------------------------------------------------------------------------
+// Wallet Standard registration. Runs synchronously at document_start (MAIN
+// world content script). registerWallet() both dispatches
+// "wallet-standard:register-wallet" and listens for "wallet-standard:app-ready",
+// so dApps that load before or after the wallet both discover it.
+// ---------------------------------------------------------------------------
+registerWallet(new ClawdStandardWallet(solana));
