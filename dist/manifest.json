@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clawd Wallet",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Solana wallet for Clawd & SolGPT. Every connection, signature and transfer needs your explicit approval. Keys stay on your device.",
   "icons": {
     "16": "icons/icon-16.png",
