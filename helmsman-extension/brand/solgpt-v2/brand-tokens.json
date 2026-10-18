@@ -1,0 +1,43 @@
+{
+  "name": "Clawd Superdesign / SolGPT v2",
+  "product": "SolGPT",
+  "wordmark": "CLAWD",
+  "studio": "Superintelligent Design",
+  "domains": {
+    "payments": "https://x402.life",
+    "tradingDesk": "https://solgpt.trade",
+    "design": "Superintelligent Design"
+  },
+  "primaryMark": "clawd-cursor-plugin-logo.png",
+  "assets": {
+    "extensionIcon": "clawd-superdesign-icon.png",
+    "banner": "clawd-superdesign-banner.png",
+    "ecosystemBanner": "clawd-ecosystem-banner.png",
+    "domainsLockup": "clawd-domains-lockup.png",
+    "uiMock": "clawd-superdesign-ui-mock.png"
+  },
+  "colors": {
+    "bg": "#0a0a0a",
+    "bgElevated": "#111111",
+    "fg": "#e7edf5",
+    "muted": "#888888",
+    "solanaGreen": "#14F195",
+    "solanaPurple": "#9945FF",
+    "accentGreen": "#14F195",
+    "accentPurple": "#9945FF",
+    "glowPurple": "rgba(153, 69, 255, 0.45)",
+    "glowGreen": "rgba(20, 241, 149, 0.35)"
+  },
+  "typography": {
+    "ui": "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+    "mono": "ui-monospace, SFMono-Regular, Menlo, monospace",
+    "tagline": "SOLGPT · SUPERINTELLIGENT DESIGN",
+    "urlLine": "x402.life · solgpt.trade"
+  },
+  "superdesignCssHooks": {
+    "primaryButton": "background: #14F195; color: #0a0a0a;",
+    "userBubble": "background: #9945FF;",
+    "headerBorder": "border-bottom: 1px solid rgba(153,69,255,0.25);",
+    "focusRing": "box-shadow: 0 0 0 2px rgba(20,241,149,0.45);"
+  }
+}

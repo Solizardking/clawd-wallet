@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "Clawd Wallet",
+  "version": "0.5.0",
+  "description": "Solana wallet for Clawd & SolGPT. Every connection, signature and transfer needs your explicit approval. Keys stay on your device.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Clawd Wallet",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "injected.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    }
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*",
+    "https://rpc.clawdchain.trade/*",
+    "https://faucet.clawdchain.trade/*",
+    "https://api.clawdchain.trade/*",
+    "https://musebook-proxy.mynameisjeffspicoli.workers.dev/*"
+  ],
+  "permissions": [
+    "storage"
+  ],
+  "minimum_chrome_version": "111"
+}
