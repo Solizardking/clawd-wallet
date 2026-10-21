@@ -58,3 +58,9 @@ Not requested: `tabs`, `scripting`, `activeTab`, `webRequest`, `cookies`, `histo
 2. Chrome → `chrome://extensions` → Developer mode on
 3. Load unpacked → select the `dist/` folder
 4. Pin Clawd Wallet
+
+## Release notes
+### 0.5.3 (2026-10-21)
+- Maintenance rebuild of 0.5.2 for the store: version bump, fresh `dist/` and zip.
+- No permission, host permission or content-script changes (still `storage` + `http(s)://*/*`).
+- Tests: 62 security/Wallet Standard + 9 unit tests pass; keyring and clawd vectors pass.

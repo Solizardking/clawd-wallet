@@ -1,6 +1,6 @@
 {
   "name": "@helmsman/extension",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -43,7 +43,7 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.5"
   },
-  "description": "Clawd / SolGPT Chrome extension \u2014 Solana wallet + agent surface. Superintelligent Design \u00b7 clawdchain.trade \u00b7 musebook.trade",
+  "description": "Clawd / SolGPT Chrome extension — Solana wallet + agent surface. Superintelligent Design · clawdchain.trade · musebook.trade",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   }
